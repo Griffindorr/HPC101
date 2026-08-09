@@ -676,8 +676,18 @@ void TwoPunctures::chebft_Zeros(double u[], int n, int inv)
    factors are precomputed once per n and reused across all transform calls.
    This removes every cos() call from the hot O(n^2) loops. */
 {
+  double *c = dvector(0, n);
+  chebft_Zeros_sc(u, n, inv, c);
+  free_dvector(c, 0, n);
+}
+
+void TwoPunctures::chebft_Zeros_sc(double u[], int n, int inv, double *c)
+/* Scratch variant of chebft_Zeros: c must be a caller-owned buffer of at
+   least n+1 doubles.  This lets the hot loops in Derivatives_AB3 allocate
+   every working array once per thread instead of per line. */
+{
   int k, j;
-  double sum, Pion, *c;
+  double sum, Pion;
 
   static int cached_n = -1;
   static double *fwd_mat = 0; /* fwd_mat[j*n+k] = fac * (-1)^j * cos(Pion*j*(k+0.5)) */
@@ -719,7 +729,6 @@ void TwoPunctures::chebft_Zeros(double u[], int n, int inv)
     }
   }
 
-  c = dvector(0, n);
   if (inv == 0)
   {
     for (j = 0; j < n; j++)
@@ -744,7 +753,6 @@ void TwoPunctures::chebft_Zeros(double u[], int n, int inv)
   }
   for (j = 0; j < n; j++)
     u[j] = c[j];
-  free_dvector(c, 0, n);
 }
 
 /* --------------------------------------------------------------------------*/
@@ -830,8 +838,21 @@ void TwoPunctures::fourft(double *u, int N, int inv)
    The cos/sin factors depend only on N, so the (M+1)xN tables are precomputed
    once per N and reused; no cos()/sin() call remains in the hot loops. */
 {
+  double *a = dvector(0, N / 2);
+  double *b = dvector(0, N / 2);
+  fourft_sc(u, N, inv, a, b);
+  free_dvector(a, 0, N / 2);
+  free_dvector(b, 0, N / 2);
+}
+
+void TwoPunctures::fourft_sc(double *u, int N, int inv, double *a, double *b)
+/* Scratch variant of fourft: a and b must be caller-owned buffers of at least
+   N/2+1 doubles each.  b is indexed as b[1..M] in the original; here it is
+   shifted to b[0..M-1] for the caller-owned buffer.  This lets the hot loops
+   in Derivatives_AB3 allocate every working array once per thread. */
+{
   int l, k, iy, M;
-  double fac, Pi_fac, *a, *b;
+  double fac, Pi_fac;
 
   static int cached_N = -1;
   static double *cos_mat = 0; /* cos_mat[l*N + k] = cos(Pi_fac*l*k), l in [0,M] */
@@ -868,8 +889,6 @@ void TwoPunctures::fourft(double *u, int N, int inv)
     }
   }
 
-  a = dvector(0, M);
-  b = dvector(1, M); /* Actually: b=vector(1,M-1) but this is problematic if M=1*/
   fac = 1. / M;
   if (inv == 0)
   {
@@ -879,12 +898,12 @@ void TwoPunctures::fourft(double *u, int N, int inv)
       const double *srow = sin_mat + l * N;
       a[l] = 0;
       if (l > 0 && l < M)
-        b[l] = 0;
+        b[l - 1] = 0;
       for (k = 0; k < N; k++)
       {
         a[l] += fac * u[k] * crow[k];
         if (l > 0 && l < M)
-          b[l] += fac * u[k] * srow[k];
+          b[l - 1] += fac * u[k] * srow[k];
       }
     }
     u[0] = a[0];
@@ -892,7 +911,7 @@ void TwoPunctures::fourft(double *u, int N, int inv)
     for (l = 1; l < M; l++)
     {
       u[l] = a[l];
-      u[l + M] = b[l];
+      u[l + M] = b[l - 1];
     }
   }
   else
@@ -902,7 +921,7 @@ void TwoPunctures::fourft(double *u, int N, int inv)
     for (l = 1; l < M; l++)
     {
       a[l] = u[l];
-      b[l] = u[M + l];
+      b[l - 1] = u[M + l];
     }
     iy = 1;
     for (k = 0; k < N; k++)
@@ -912,14 +931,12 @@ void TwoPunctures::fourft(double *u, int N, int inv)
       {
         const double *crow = cos_mat + l * N;
         const double *srow = sin_mat + l * N;
-        sum += a[l] * crow[k] + b[l] * srow[k];
+        sum += a[l] * crow[k] + b[l - 1] * srow[k];
       }
       u[k] = sum;
       iy = -iy;
     }
   }
-  free_dvector(a, 0, M);
-  free_dvector(b, 1, M);
 }
 
 /* -----------------------------------------*/
@@ -1225,10 +1242,26 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
      (ivar, row) combination writes disjoint v.* entries, so the pass body is
      collapsed over (ivar, row) for parallelism; the implicit barrier between
      the three `#pragma omp for` blocks preserves the serial data order and
-     gives bit-identical results.  Work arrays are private per iteration. */
+     gives bit-identical results.  All working arrays (indx, p, dp, d2p, q, dq,
+     r, dr, plus the chebft/fourft scratch) are allocated ONCE per OpenMP
+     thread and reused across every line that thread visits, eliminating ~77
+     malloc/free pairs per line (the spectral transforms previously allocated
+     their own scratch on every call). */
 
 #pragma omp parallel shared(nvar, n1, n2, n3, N, v) private(i, j, k)
   {
+    int *indx = ivector(0, N);
+    double *p = dvector(0, N);
+    double *dp = dvector(0, N);
+    double *d2p = dvector(0, N);
+    double *q = dvector(0, N);
+    double *dq = dvector(0, N);
+    double *r = dvector(0, N);
+    double *dr = dvector(0, N);
+    double *cb = dvector(0, N);
+    double *ab = dvector(0, N);
+    double *bb = dvector(0, N);
+
     /* Derivatives w.r.t. A-Dir. (Chebyshev along i) */
 #pragma omp for collapse(2) schedule(static)
     for (ivar = 0; ivar < nvar; ivar++)
@@ -1236,29 +1269,21 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
       {
         for (j = 0; j < n2; j++)
         {
-          int *indx = ivector(0, N);
-          double *p = dvector(0, N);
-          double *dp = dvector(0, N);
-          double *d2p = dvector(0, N);
           for (i = 0; i < n1; i++)
           {
             indx[i] = Index(ivar, i, j, k, nvar, n1, n2, n3);
             p[i] = v.d0[indx[i]];
           }
-          chebft_Zeros(p, n1, 0);
+          chebft_Zeros_sc(p, n1, 0, cb);
           chder(p, dp, n1);
           chder(dp, d2p, n1);
-          chebft_Zeros(dp, n1, 1);
-          chebft_Zeros(d2p, n1, 1);
+          chebft_Zeros_sc(dp, n1, 1, cb);
+          chebft_Zeros_sc(d2p, n1, 1, cb);
           for (i = 0; i < n1; i++)
           {
             v.d1[indx[i]] = dp[i];
             v.d11[indx[i]] = d2p[i];
           }
-          free_ivector(indx, 0, N);
-          free_dvector(p, 0, N);
-          free_dvector(dp, 0, N);
-          free_dvector(d2p, 0, N);
         }
       }
     /* Derivatives w.r.t. B-Dir. (Chebyshev along j) */
@@ -1268,38 +1293,26 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
       {
         for (i = 0; i < n1; i++)
         {
-          int *indx = ivector(0, N);
-          double *p = dvector(0, N);
-          double *dp = dvector(0, N);
-          double *d2p = dvector(0, N);
-          double *q = dvector(0, N);
-          double *dq = dvector(0, N);
           for (j = 0; j < n2; j++)
           {
             indx[j] = Index(ivar, i, j, k, nvar, n1, n2, n3);
             p[j] = v.d0[indx[j]];
             q[j] = v.d1[indx[j]];
           }
-          chebft_Zeros(p, n2, 0);
-          chebft_Zeros(q, n2, 0);
+          chebft_Zeros_sc(p, n2, 0, cb);
+          chebft_Zeros_sc(q, n2, 0, cb);
           chder(p, dp, n2);
           chder(dp, d2p, n2);
           chder(q, dq, n2);
-          chebft_Zeros(dp, n2, 1);
-          chebft_Zeros(d2p, n2, 1);
-          chebft_Zeros(dq, n2, 1);
+          chebft_Zeros_sc(dp, n2, 1, cb);
+          chebft_Zeros_sc(d2p, n2, 1, cb);
+          chebft_Zeros_sc(dq, n2, 1, cb);
           for (j = 0; j < n2; j++)
           {
             v.d2[indx[j]] = dp[j];
             v.d22[indx[j]] = d2p[j];
             v.d12[indx[j]] = dq[j];
           }
-          free_ivector(indx, 0, N);
-          free_dvector(p, 0, N);
-          free_dvector(dp, 0, N);
-          free_dvector(d2p, 0, N);
-          free_dvector(q, 0, N);
-          free_dvector(dq, 0, N);
         }
       }
     /* Derivatives w.r.t. phi-Dir. (Fourier along k) */
@@ -1309,14 +1322,6 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
       {
         for (j = 0; j < n2; j++)
         {
-          int *indx = ivector(0, N);
-          double *p = dvector(0, N);
-          double *dp = dvector(0, N);
-          double *d2p = dvector(0, N);
-          double *q = dvector(0, N);
-          double *dq = dvector(0, N);
-          double *r = dvector(0, N);
-          double *dr = dvector(0, N);
           for (k = 0; k < n3; k++)
           {
             indx[k] = Index(ivar, i, j, k, nvar, n1, n2, n3);
@@ -1324,17 +1329,17 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
             q[k] = v.d1[indx[k]];
             r[k] = v.d2[indx[k]];
           }
-          fourft(p, n3, 0);
+          fourft_sc(p, n3, 0, ab, bb);
           fourder(p, dp, n3);
           fourder2(p, d2p, n3);
-          fourft(dp, n3, 1);
-          fourft(d2p, n3, 1);
-          fourft(q, n3, 0);
+          fourft_sc(dp, n3, 1, ab, bb);
+          fourft_sc(d2p, n3, 1, ab, bb);
+          fourft_sc(q, n3, 0, ab, bb);
           fourder(q, dq, n3);
-          fourft(dq, n3, 1);
-          fourft(r, n3, 0);
+          fourft_sc(dq, n3, 1, ab, bb);
+          fourft_sc(r, n3, 0, ab, bb);
           fourder(r, dr, n3);
-          fourft(dr, n3, 1);
+          fourft_sc(dr, n3, 1, ab, bb);
           for (k = 0; k < n3; k++)
           {
             v.d3[indx[k]] = dp[k];
@@ -1342,16 +1347,20 @@ void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
             v.d13[indx[k]] = dq[k];
             v.d23[indx[k]] = dr[k];
           }
-          free_ivector(indx, 0, N);
-          free_dvector(p, 0, N);
-          free_dvector(dp, 0, N);
-          free_dvector(d2p, 0, N);
-          free_dvector(q, 0, N);
-          free_dvector(dq, 0, N);
-          free_dvector(r, 0, N);
-          free_dvector(dr, 0, N);
         }
       }
+
+    free_ivector(indx, 0, N);
+    free_dvector(p, 0, N);
+    free_dvector(dp, 0, N);
+    free_dvector(d2p, 0, N);
+    free_dvector(q, 0, N);
+    free_dvector(dq, 0, N);
+    free_dvector(r, 0, N);
+    free_dvector(dr, 0, N);
+    free_dvector(cb, 0, N);
+    free_dvector(ab, 0, N);
+    free_dvector(bb, 0, N);
   }
 }
 /* --------------------------------------------------------------------------*/
@@ -1978,12 +1987,16 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
     for (i = 0; i < ntotal; i++)
       d0p[i] = 0.0;
     double *vals = dvector(0, nvar - 1);
-    derivs dpv;
+    derivs dpv, dU, U;
     dpv.d0 = d0p;
     /* JFD_times_dv reads only dv.d0; the other derivs fields are unused. */
     dpv.d1 = dpv.d2 = dpv.d3 = 0;
     dpv.d11 = dpv.d12 = dpv.d13 = 0;
     dpv.d22 = dpv.d23 = dpv.d33 = 0;
+    /* Scratch buffers reused across the whole thread's stencil sweep,
+       avoiding ~20 malloc/free pairs per JFD_times_dv call. */
+    allocate_derivs(&dU, nvar);
+    allocate_derivs(&U, nvar);
 
 #pragma omp for schedule(static)
     for (i = 0; i < n1; i++)
@@ -2011,8 +2024,8 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
               {
                 for (k1 = k_0; k1 <= k_1; k1++)
                 {
-                  JFD_times_dv(i1, j1, k1, nvar, n1, n2, n3,
-                               dpv, u, vals);
+                  JFD_times_dv_sc(i1, j1, k1, nvar, n1, n2, n3,
+                                  dpv, u, vals, dU, U);
                   for (ivar1 = 0; ivar1 < nvar; ivar1++)
                   {
                     if (vals[ivar1] != 0)
@@ -2034,6 +2047,8 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
     }
 
     free_dvector(vals, 0, nvar - 1);
+    free_derivs(&dU, nvar);
+    free_derivs(&U, nvar);
     delete[] d0p;
   }
 
@@ -2369,16 +2384,27 @@ void TwoPunctures::JFD_times_dv(int i, int j, int k, int nvar, int n1, int n2,
   /* First row to be calculated: row = Index(0,      i, j, k; nvar, n1, n2, n3)*/
   /* Last  row to be calculated: row = Index(nvar-1, i, j, k; nvar, n1, n2, n3)*/
   /* These rows are stored in the vector JFDdv[0] ... JFDdv[nvar-1].*/
+  derivs dU, U;
+  allocate_derivs(&dU, nvar);
+  allocate_derivs(&U, nvar);
+  JFD_times_dv_sc(i, j, k, nvar, n1, n2, n3, dv, u, values, dU, U);
+  free_derivs(&dU, nvar);
+  free_derivs(&U, nvar);
+}
+
+void TwoPunctures::JFD_times_dv_sc(int i, int j, int k, int nvar, int n1, int n2,
+                                   int n3, derivs dv, derivs u, double *values,
+                                   derivs dU, derivs U)
+{ /* Scratch variant of JFD_times_dv: dU and U must be caller-owned derivs
+     buffers of size nvar.  This lets SetMatrix_JFD's hot 3x3x3 stencil loop
+     allocate every working array once per OpenMP thread instead of ~20
+     malloc/free pairs per stencil point (~35M allocations per matrix build). */
   int ivar, indx;
   double al, be, A, B, X, R, x, r, phi, y, z, Am1;
   double sin_al, sin_al_i1, sin_al_i2, sin_al_i3, cos_al;
   double sin_be, sin_be_i1, sin_be_i2, sin_be_i3, cos_be;
   double dV0, dV1, dV2, dV3, dV11, dV12, dV13, dV22, dV23, dV33,
       ha, ga, ga2, hb, gb, gb2, hp, gp, gp2, gagb, gagp, gbgp;
-  derivs dU, U;
-
-  allocate_derivs(&dU, nvar);
-  allocate_derivs(&U, nvar);
 
   if (k < 0)
     k = k + n3;
@@ -2496,9 +2522,6 @@ void TwoPunctures::JFD_times_dv(int i, int j, int k, int nvar, int n1, int n2,
   LinEquations(A, B, X, R, x, r, phi, y, z, dU, U, values);
   for (ivar = 0; ivar < nvar; ivar++)
     values[ivar] *= FAC;
-
-  free_derivs(&dU, nvar);
-  free_derivs(&U, nvar);
 }
 #undef FAC
 /*-----------------------------------------------------------*/

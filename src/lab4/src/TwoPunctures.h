@@ -100,10 +100,12 @@ public:
        int maximum3(int i, int j, int k);
        int pow_int(int mantisse, int exponent);
        void chebft_Zeros(double u[], int n, int inv);
+       void chebft_Zeros_sc(double u[], int n, int inv, double *c);
        void chebft_Extremes(double u[], int n, int inv);
        void chder(double *c, double *cder, int n);
        double chebev(double a, double b, double c[], int m, double x);
        void fourft(double *u, int N, int inv);
+       void fourft_sc(double *u, int N, int inv, double *a, double *b);
        void fourder(double u[], double du[], int N);
        void fourder2(double u[], double d2u[], int N);
        double fourev(double *u, int N, double x);
@@ -148,6 +150,9 @@ public:
                          double **JFD);
        void JFD_times_dv(int i, int j, int k, int nvar, int n1, int n2,
                          int n3, derivs dv, derivs u, double *values);
+       void JFD_times_dv_sc(int i, int j, int k, int nvar, int n1, int n2,
+                            int n3, derivs dv, derivs u, double *values,
+                            derivs dU, derivs U);
        void LinEquations(double A, double B, double X, double R,
                          double x, double r, double phi,
                          double y, double z, derivs dU, derivs U, double *values);
