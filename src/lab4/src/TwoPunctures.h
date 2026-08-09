@@ -4,8 +4,12 @@
 
 #define StencilSize 19
 #define N_PlaneRelax 1
-#define NRELAX 200
+#define NRELAX 25
 #define Step_Relax 1
+
+/* Max tridiagonal line length for the line-relaxation / Thomas solvers.
+   nA/nB are checked against this at construction. */
+#define MAX_LINE_SIZE 256
 
 #define Pi 3.14159265358979323846264338328
 #define Pih 1.57079632679489661923132169164 /* Pi/2*/
@@ -41,6 +45,24 @@ private:
        int Newton_maxit;
 
        int ntotal;
+
+       /* Prefactorized tridiagonal line LU factors for the relax()
+          preconditioner. JFD is constant within a bicgstab iteration, so
+          every line's factorization (with its divisions) is computed once
+          per bicgstab call instead of once per relax sweep.
+          be-lines run along j (length n2), al-lines along i (length n1). */
+       double *lu_be_l, *lu_be_u, *lu_be_r;
+       double *lu_al_l, *lu_al_u, *lu_al_r;
+
+       /* Profiling counters: wall time spent inside the OpenMP region of
+          relax(), and how many times relax() was entered.  Only the master
+          thread accumulates (see relax()). */
+       double relax_wall;
+       long   relax_calls;
+
+       /* Serial-phase profiling inside bicgstab() (accumulated by the calling
+          thread; only meaningful for a single MPI rank). */
+       double t_F_of_v, t_SetJFD, t_BuildLF, t_J_times_dv, t_spec;
 
        struct parameters
        {
@@ -115,6 +137,7 @@ public:
                             double y, double z, derivs U, double *values);
        double BY_KKofxyz(double x, double y, double z);
        void SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u, int *ncols, int **cols, double **Matrix);
+       void BuildLineFactors(int nvar, int n1, int n2, int n3, int *ncols, int **cols, double **JFD);
        void J_times_dv(int nvar, int n1, int n2, int n3, derivs dv, double *Jdv, derivs u);
        void relax(double *dv, int const nvar, int const n1, int const n2, int const n3,
                   double const *rhs, int const *ncols, int **cols, double **JFD);
@@ -133,7 +156,6 @@ public:
                          int const n1, int const n2, int const n3,
                          double const *rhs, int const *ncols,
                          int **cols, double **JFD);
-       void ThomasAlgorithm(int N, double *b, double *a, double *c, double *x, double *q);
        void Save(char *fname);
        // provided by Vasileios Paschalidis (vpaschal@illinois.edu)
        double Spec_IntPolABphiFast(parameters par, double *v, int ivar, double A, double B, double phi);

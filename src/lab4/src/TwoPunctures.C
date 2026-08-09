@@ -12,6 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <complex>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 using namespace std;
 #else
 #include <assert.h>
@@ -39,6 +42,8 @@ TwoPunctures::TwoPunctures(double mp, double mm, double b,
                                               npoints_B(nB), npoints_phi(nphi), target_M_plus(Mp), target_M_minus(Mm),
                                               adm_tol(admtol), Newton_tol(Newtontol), Newton_maxit(Newtonmaxit)
 {
+  assert(nA <= MAX_LINE_SIZE && nB <= MAX_LINE_SIZE);
+
   par_P_plus[0] = P_plusx;
   par_P_plus[1] = P_plusy;
   par_P_plus[2] = P_plusz;
@@ -59,10 +64,27 @@ TwoPunctures::TwoPunctures(double mp, double mm, double b,
   F = dvector(0, ntotal - 1);
   allocate_derivs(&u, ntotal);
   allocate_derivs(&v, ntotal);
+
+  lu_be_l = new double[ntotal];
+  lu_be_u = new double[ntotal];
+  lu_be_r = new double[ntotal];
+  lu_al_l = new double[ntotal];
+  lu_al_u = new double[ntotal];
+  lu_al_r = new double[ntotal];
+
+  relax_wall = 0.0;
+  relax_calls = 0;
+  t_F_of_v = t_SetJFD = t_BuildLF = t_J_times_dv = t_spec = 0.0;
 }
 
 TwoPunctures::~TwoPunctures()
 {
+  delete[] lu_be_l;
+  delete[] lu_be_u;
+  delete[] lu_be_r;
+  delete[] lu_al_l;
+  delete[] lu_al_u;
+  delete[] lu_al_r;
   free_dvector(F, 0, ntotal - 1);
   free_derivs(&u, ntotal);
   free_derivs(&v, ntotal);
@@ -649,37 +671,74 @@ int TwoPunctures::pow_int(int mantisse, int exponent)
 
 /*--------------------------------------------------------------------------*/
 void TwoPunctures::chebft_Zeros(double u[], int n, int inv)
-/* eq. 5.8.7 and 5.8.8 at x = (5.8.4) of 2nd edition C++ NR */
+/* eq. 5.8.7 and 5.8.8 at x = (5.8.4) of 2nd edition C++ NR
+   The transform matrices depend only on n (not on the data), so the cosine
+   factors are precomputed once per n and reused across all transform calls.
+   This removes every cos() call from the hot O(n^2) loops. */
 {
-  int k, j, isignum;
-  double fac, sum, Pion, *c;
+  int k, j;
+  double sum, Pion, *c;
+
+  static int cached_n = -1;
+  static double *fwd_mat = 0; /* fwd_mat[j*n+k] = fac * (-1)^j * cos(Pion*j*(k+0.5)) */
+  static double *inv_mat = 0; /* inv_mat[j*n+k] = (-1)^k * cos(Pion*(j+0.5)*k) */
+
+  if (n != cached_n)
+  {
+#pragma omp critical(chebft_Zeros_cache)
+    {
+      if (n != cached_n)
+      {
+        if (fwd_mat)
+        {
+          delete[] fwd_mat;
+          delete[] inv_mat;
+        }
+        fwd_mat = new double[n * n];
+        inv_mat = new double[n * n];
+        Pion = Pi / n;
+        {
+          double fac = 2.0 / n;
+          for (j = 0; j < n; j++)
+          {
+            double sgn = (j & 1) ? -fac : fac; /* fac * isignum with alternating sign */
+            for (k = 0; k < n; k++)
+              fwd_mat[j * n + k] = sgn * cos(Pion * j * (k + 0.5));
+          }
+        }
+        for (j = 0; j < n; j++)
+        {
+          for (k = 0; k < n; k++)
+          {
+            double sgn = (k & 1) ? -1.0 : 1.0; /* isignum alternates per k */
+            inv_mat[j * n + k] = sgn * cos(Pion * (j + 0.5) * k);
+          }
+        }
+        cached_n = n;
+      }
+    }
+  }
 
   c = dvector(0, n);
-  Pion = Pi / n;
   if (inv == 0)
   {
-    fac = 2.0 / n;
-    isignum = 1;
     for (j = 0; j < n; j++)
     {
+      const double *row = fwd_mat + j * n;
       sum = 0.0;
       for (k = 0; k < n; k++)
-        sum += u[k] * cos(Pion * j * (k + 0.5));
-      c[j] = fac * sum * isignum;
-      isignum = -isignum;
+        sum += row[k] * u[k];
+      c[j] = sum;
     }
   }
   else
   {
     for (j = 0; j < n; j++)
     {
+      const double *row = inv_mat + j * n;
       sum = -0.5 * u[0];
-      isignum = 1;
       for (k = 0; k < n; k++)
-      {
-        sum += u[k] * cos(Pion * (j + 0.5) * k) * isignum;
-        isignum = -isignum;
-      }
+        sum += row[k] * u[k];
       c[j] = sum;
     }
   }
@@ -767,30 +826,65 @@ double TwoPunctures::chebev(double a, double b, double c[], int m, double x)
 
 /* --------------------------------------------------------------------------*/
 void TwoPunctures::fourft(double *u, int N, int inv)
-/* a (slow) Fourier transform, seems to be just eq. 12.1.6 and 12.1.9 of C++ NR (2nd ed) */
+/* a (slow) Fourier transform, seems to be just eq. 12.1.6 and 12.1.9 of C++ NR (2nd ed)
+   The cos/sin factors depend only on N, so the (M+1)xN tables are precomputed
+   once per N and reused; no cos()/sin() call remains in the hot loops. */
 {
   int l, k, iy, M;
-  double x, x1, fac, Pi_fac, *a, *b;
+  double fac, Pi_fac, *a, *b;
+
+  static int cached_N = -1;
+  static double *cos_mat = 0; /* cos_mat[l*N + k] = cos(Pi_fac*l*k), l in [0,M] */
+  static double *sin_mat = 0; /* sin_mat[l*N + k] = sin(Pi_fac*l*k), l in [0,M] */
 
   M = N / 2;
+  if (N != cached_N)
+  {
+#pragma omp critical(fourft_cache)
+    {
+      if (N != cached_N)
+      {
+        if (cos_mat)
+        {
+          delete[] cos_mat;
+          delete[] sin_mat;
+        }
+        cos_mat = new double[(M + 1) * N];
+        sin_mat = new double[(M + 1) * N];
+        fac = 1. / M;
+        Pi_fac = Pi * fac;
+        for (l = 0; l <= M; l++)
+        {
+          double x1 = Pi_fac * l;
+          for (k = 0; k < N; k++)
+          {
+            double x = x1 * k;
+            cos_mat[l * N + k] = cos(x);
+            sin_mat[l * N + k] = sin(x);
+          }
+        }
+        cached_N = N;
+      }
+    }
+  }
+
   a = dvector(0, M);
   b = dvector(1, M); /* Actually: b=vector(1,M-1) but this is problematic if M=1*/
   fac = 1. / M;
-  Pi_fac = Pi * fac;
   if (inv == 0)
   {
     for (l = 0; l <= M; l++)
     {
+      const double *crow = cos_mat + l * N;
+      const double *srow = sin_mat + l * N;
       a[l] = 0;
       if (l > 0 && l < M)
         b[l] = 0;
-      x1 = Pi_fac * l;
       for (k = 0; k < N; k++)
       {
-        x = x1 * k;
-        a[l] += fac * u[k] * cos(x);
+        a[l] += fac * u[k] * crow[k];
         if (l > 0 && l < M)
-          b[l] += fac * u[k] * sin(x);
+          b[l] += fac * u[k] * srow[k];
       }
     }
     u[0] = a[0];
@@ -813,13 +907,14 @@ void TwoPunctures::fourft(double *u, int N, int inv)
     iy = 1;
     for (k = 0; k < N; k++)
     {
-      u[k] = 0.5 * (a[0] + a[M] * iy);
-      x1 = Pi_fac * k;
+      double sum = 0.5 * (a[0] + a[M] * iy);
       for (l = 1; l < M; l++)
       {
-        x = x1 * l;
-        u[k] += a[l] * cos(x) + b[l] * sin(x);
+        const double *crow = cos_mat + l * N;
+        const double *srow = sin_mat + l * N;
+        sum += a[l] * crow[k] + b[l] * srow[k];
       }
+      u[k] = sum;
       iy = -iy;
     }
   }
@@ -1121,108 +1216,143 @@ void TwoPunctures::rx3_To_xyz(int nvar, double x, double r, double phi,
 /* --------------------------------------------------------------------------*/
 void TwoPunctures::Derivatives_AB3(int nvar, int n1, int n2, int n3, derivs v)
 {
-  int i, j, k, ivar, N, *indx;
-  double *p, *dp, *d2p, *q, *dq, *r, *dr;
+  int i, j, k, ivar, N;
 
   N = maximum3(n1, n2, n3);
-  p = dvector(0, N);
-  dp = dvector(0, N);
-  d2p = dvector(0, N);
-  q = dvector(0, N);
-  dq = dvector(0, N);
-  r = dvector(0, N);
-  dr = dvector(0, N);
-  indx = ivector(0, N);
 
-  for (ivar = 0; ivar < nvar; ivar++)
+  /* Three direction passes, run in fixed order (A -> B -> phi) because each
+     reads the previous pass' output (v.d1, v.d2).  Within each pass every
+     (ivar, row) combination writes disjoint v.* entries, so the pass body is
+     collapsed over (ivar, row) for parallelism; the implicit barrier between
+     the three `#pragma omp for` blocks preserves the serial data order and
+     gives bit-identical results.  Work arrays are private per iteration. */
+
+#pragma omp parallel shared(nvar, n1, n2, n3, N, v) private(i, j, k)
   {
-    for (k = 0; k < n3; k++)
-    { /* Calculation of Derivatives w.r.t. A-Dir. */
-      for (j = 0; j < n2; j++)
-      { /* (Chebyshev_Zeros)*/
-        for (i = 0; i < n1; i++)
-        {
-          indx[i] = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          p[i] = v.d0[indx[i]];
-        }
-        chebft_Zeros(p, n1, 0);
-        chder(p, dp, n1);
-        chder(dp, d2p, n1);
-        chebft_Zeros(dp, n1, 1);
-        chebft_Zeros(d2p, n1, 1);
-        for (i = 0; i < n1; i++)
-        {
-          v.d1[indx[i]] = dp[i];
-          v.d11[indx[i]] = d2p[i];
-        }
-      }
-    }
-    for (k = 0; k < n3; k++)
-    { /* Calculation of Derivatives w.r.t. B-Dir. */
-      for (i = 0; i < n1; i++)
-      { /* (Chebyshev_Zeros)*/
-        for (j = 0; j < n2; j++)
-        {
-          indx[j] = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          p[j] = v.d0[indx[j]];
-          q[j] = v.d1[indx[j]];
-        }
-        chebft_Zeros(p, n2, 0);
-        chebft_Zeros(q, n2, 0);
-        chder(p, dp, n2);
-        chder(dp, d2p, n2);
-        chder(q, dq, n2);
-        chebft_Zeros(dp, n2, 1);
-        chebft_Zeros(d2p, n2, 1);
-        chebft_Zeros(dq, n2, 1);
-        for (j = 0; j < n2; j++)
-        {
-          v.d2[indx[j]] = dp[j];
-          v.d22[indx[j]] = d2p[j];
-          v.d12[indx[j]] = dq[j];
-        }
-      }
-    }
-    for (i = 0; i < n1; i++)
-    { /* Calculation of Derivatives w.r.t. phi-Dir. (Fourier)*/
-      for (j = 0; j < n2; j++)
+    /* Derivatives w.r.t. A-Dir. (Chebyshev along i) */
+#pragma omp for collapse(2) schedule(static)
+    for (ivar = 0; ivar < nvar; ivar++)
+      for (k = 0; k < n3; k++)
       {
-        for (k = 0; k < n3; k++)
+        for (j = 0; j < n2; j++)
         {
-          indx[k] = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          p[k] = v.d0[indx[k]];
-          q[k] = v.d1[indx[k]];
-          r[k] = v.d2[indx[k]];
-        }
-        fourft(p, n3, 0);
-        fourder(p, dp, n3);
-        fourder2(p, d2p, n3);
-        fourft(dp, n3, 1);
-        fourft(d2p, n3, 1);
-        fourft(q, n3, 0);
-        fourder(q, dq, n3);
-        fourft(dq, n3, 1);
-        fourft(r, n3, 0);
-        fourder(r, dr, n3);
-        fourft(dr, n3, 1);
-        for (k = 0; k < n3; k++)
-        {
-          v.d3[indx[k]] = dp[k];
-          v.d33[indx[k]] = d2p[k];
-          v.d13[indx[k]] = dq[k];
-          v.d23[indx[k]] = dr[k];
+          int *indx = ivector(0, N);
+          double *p = dvector(0, N);
+          double *dp = dvector(0, N);
+          double *d2p = dvector(0, N);
+          for (i = 0; i < n1; i++)
+          {
+            indx[i] = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            p[i] = v.d0[indx[i]];
+          }
+          chebft_Zeros(p, n1, 0);
+          chder(p, dp, n1);
+          chder(dp, d2p, n1);
+          chebft_Zeros(dp, n1, 1);
+          chebft_Zeros(d2p, n1, 1);
+          for (i = 0; i < n1; i++)
+          {
+            v.d1[indx[i]] = dp[i];
+            v.d11[indx[i]] = d2p[i];
+          }
+          free_ivector(indx, 0, N);
+          free_dvector(p, 0, N);
+          free_dvector(dp, 0, N);
+          free_dvector(d2p, 0, N);
         }
       }
-    }
+    /* Derivatives w.r.t. B-Dir. (Chebyshev along j) */
+#pragma omp for collapse(2) schedule(static)
+    for (ivar = 0; ivar < nvar; ivar++)
+      for (k = 0; k < n3; k++)
+      {
+        for (i = 0; i < n1; i++)
+        {
+          int *indx = ivector(0, N);
+          double *p = dvector(0, N);
+          double *dp = dvector(0, N);
+          double *d2p = dvector(0, N);
+          double *q = dvector(0, N);
+          double *dq = dvector(0, N);
+          for (j = 0; j < n2; j++)
+          {
+            indx[j] = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            p[j] = v.d0[indx[j]];
+            q[j] = v.d1[indx[j]];
+          }
+          chebft_Zeros(p, n2, 0);
+          chebft_Zeros(q, n2, 0);
+          chder(p, dp, n2);
+          chder(dp, d2p, n2);
+          chder(q, dq, n2);
+          chebft_Zeros(dp, n2, 1);
+          chebft_Zeros(d2p, n2, 1);
+          chebft_Zeros(dq, n2, 1);
+          for (j = 0; j < n2; j++)
+          {
+            v.d2[indx[j]] = dp[j];
+            v.d22[indx[j]] = d2p[j];
+            v.d12[indx[j]] = dq[j];
+          }
+          free_ivector(indx, 0, N);
+          free_dvector(p, 0, N);
+          free_dvector(dp, 0, N);
+          free_dvector(d2p, 0, N);
+          free_dvector(q, 0, N);
+          free_dvector(dq, 0, N);
+        }
+      }
+    /* Derivatives w.r.t. phi-Dir. (Fourier along k) */
+#pragma omp for collapse(2) schedule(static)
+    for (ivar = 0; ivar < nvar; ivar++)
+      for (i = 0; i < n1; i++)
+      {
+        for (j = 0; j < n2; j++)
+        {
+          int *indx = ivector(0, N);
+          double *p = dvector(0, N);
+          double *dp = dvector(0, N);
+          double *d2p = dvector(0, N);
+          double *q = dvector(0, N);
+          double *dq = dvector(0, N);
+          double *r = dvector(0, N);
+          double *dr = dvector(0, N);
+          for (k = 0; k < n3; k++)
+          {
+            indx[k] = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            p[k] = v.d0[indx[k]];
+            q[k] = v.d1[indx[k]];
+            r[k] = v.d2[indx[k]];
+          }
+          fourft(p, n3, 0);
+          fourder(p, dp, n3);
+          fourder2(p, d2p, n3);
+          fourft(dp, n3, 1);
+          fourft(d2p, n3, 1);
+          fourft(q, n3, 0);
+          fourder(q, dq, n3);
+          fourft(dq, n3, 1);
+          fourft(r, n3, 0);
+          fourder(r, dr, n3);
+          fourft(dr, n3, 1);
+          for (k = 0; k < n3; k++)
+          {
+            v.d3[indx[k]] = dp[k];
+            v.d33[indx[k]] = d2p[k];
+            v.d13[indx[k]] = dq[k];
+            v.d23[indx[k]] = dr[k];
+          }
+          free_ivector(indx, 0, N);
+          free_dvector(p, 0, N);
+          free_dvector(dp, 0, N);
+          free_dvector(d2p, 0, N);
+          free_dvector(q, 0, N);
+          free_dvector(dq, 0, N);
+          free_dvector(r, 0, N);
+          free_dvector(dr, 0, N);
+        }
+      }
   }
-  free_dvector(p, 0, N);
-  free_dvector(dp, 0, N);
-  free_dvector(d2p, 0, N);
-  free_dvector(q, 0, N);
-  free_dvector(dq, 0, N);
-  free_dvector(r, 0, N);
-  free_dvector(dr, 0, N);
-  free_ivector(indx, 0, N);
 }
 /* --------------------------------------------------------------------------*/
 void TwoPunctures::Newton(int const nvar, int const n1, int const n2, int const n3,
@@ -1231,6 +1361,7 @@ void TwoPunctures::Newton(int const nvar, int const n1, int const n2, int const 
   int ntotal = n1 * n2 * n3 * nvar, ii, it;
   double *F, dmax, normres;
   derivs u, dv;
+  const double _nw0 = omp_get_wtime();
 
   F = dvector(0, ntotal - 1);
   allocate_derivs(&dv, ntotal);
@@ -1269,6 +1400,7 @@ void TwoPunctures::Newton(int const nvar, int const n1, int const n2, int const 
   }
 
   printf("Newton: it=%d \t |F|=%e \n", it, (double)dmax);
+  printf("Newton wall: %.3f s\n", omp_get_wtime() - _nw0);
 
   fflush(stdout);
 
@@ -1489,8 +1621,21 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   cols = imatrix(0, ntotal - 1, 0, maxcol - 1);
   ncols = ivector(0, ntotal - 1);
 
-  F_of_v(nvar, n1, n2, n3, v, F, u);
-  SetMatrix_JFD(nvar, n1, n2, n3, u, ncols, cols, JFD);
+  {
+    double _a = omp_get_wtime();
+    F_of_v(nvar, n1, n2, n3, v, F, u);
+    t_F_of_v += omp_get_wtime() - _a;
+  }
+  {
+    double _a = omp_get_wtime();
+    SetMatrix_JFD(nvar, n1, n2, n3, u, ncols, cols, JFD);
+    t_SetJFD += omp_get_wtime() - _a;
+  }
+  {
+    double _a = omp_get_wtime();
+    BuildLineFactors(nvar, n1, n2, n3, ncols, cols, JFD);
+    t_BuildLF += omp_get_wtime() - _a;
+  }
 
   /* temporary storage */
   r = dvector(0, ntotal - 1);
@@ -1512,7 +1657,11 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   }
 
   /* compute initial residual rt = r = F - J*dv */
-  J_times_dv(nvar, n1, n2, n3, dv, r, u);
+  {
+    double _a = omp_get_wtime();
+    J_times_dv(nvar, n1, n2, n3, dv, r, u);
+    t_J_times_dv += omp_get_wtime() - _a;
+  }
   for (int j = 0; j < ntotal; j++)
     rt[j] = r[j] = F[j] - r[j];
 
@@ -1552,7 +1701,11 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
     for (int j = 0; j < NRELAX; j++) /* solves JFD*ph = p by relaxation*/
       relax(ph.d0, nvar, n1, n2, n3, p, ncols, cols, JFD);
 
-    J_times_dv(nvar, n1, n2, n3, ph, vv, u); /* vv=J*ph*/
+    {
+      double _a = omp_get_wtime();
+      J_times_dv(nvar, n1, n2, n3, ph, vv, u); /* vv=J*ph*/
+      t_J_times_dv += omp_get_wtime() - _a;
+    }
     alpha = rho / scalarproduct(rt, vv, ntotal);
     for (int j = 0; j < ntotal; j++)
       s[j] = r[j] - alpha * vv[j];
@@ -1578,7 +1731,11 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
     for (int j = 0; j < NRELAX; j++) /* solves JFD*sh = s by relaxation*/
       relax(sh.d0, nvar, n1, n2, n3, s, ncols, cols, JFD);
 
-    J_times_dv(nvar, n1, n2, n3, sh, t, u); /* t=J*sh*/
+    {
+      double _a = omp_get_wtime();
+      J_times_dv(nvar, n1, n2, n3, sh, t, u); /* t=J*sh*/
+      t_J_times_dv += omp_get_wtime() - _a;
+    }
     omega = scalarproduct(t, s, ntotal) / scalarproduct(t, t, ntotal);
 
     /* compute new solution approximation */
@@ -1620,6 +1777,11 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   free_dmatrix(JFD, 0, ntotal - 1, 0, maxcol - 1);
   free_imatrix(cols, 0, ntotal - 1, 0, maxcol - 1);
   free_ivector(ncols, 0, ntotal - 1);
+
+  printf("relax profile: calls=%ld  omp-wall=%.3f s\n", relax_calls, relax_wall);
+  printf("serial profile: F_of_v=%.3f  SetJFD=%.3f  BuildLF=%.3f  J_times_dv=%.3f  (spec=%.3f) s\n",
+         t_F_of_v, t_SetJFD, t_BuildLF, t_J_times_dv, t_spec);
+  fflush(stdout);
 
   /* iteration failed */
   if (ii > itmax)
@@ -1766,9 +1928,21 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
       ivar, ivar1, ntotal = nvar * n1 * n2 * n3;
   double *values;
   derivs dv;
+  const int maxnbr = 27; /* 3x3x3 stencil */
 
   values = dvector(0, nvar - 1);
   allocate_derivs(&dv, ntotal);
+
+  /* Two-phase construction so the expensive JFD_times_dv evaluations run in
+     parallel while the final table fill keeps the exact serial order:
+       Phase 1 (parallel): each column independently evaluates its 27-stencil
+         contributions using a private dv.d0 probe and a private values
+         buffer, storing raw (row, value) pairs in tmp_row/tmp_val.
+       Phase 2 (serial): walk the columns in the original (i,j,k) order and
+         append the cached pairs into cols/Matrix/ncols.  Because phase 2
+         visits rows in exactly the serial order, the resulting CSR layout is
+         bit-identical to the serial code.  JFD_times_dv only reads dv.d0, so
+         the private probe needs no other derivative arrays. */
 
   N1 = n1 - 1;
   N2 = n2 - 1;
@@ -1789,6 +1963,81 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
       }
     }
   }
+
+  int *tmp_row = new int[ntotal * maxnbr];
+  double *tmp_val = new double[ntotal * maxnbr];
+  int *tmp_cnt = new int[ntotal];
+
+#pragma omp parallel default(none)                            \
+    shared(nvar, n1, n2, n3, u, ntotal, tmp_row, tmp_val, tmp_cnt, \
+           N1, N2, N3) private(i, j, k, ivar, column, row, i1, j1, k1, \
+           i_0, i_1, j_0, j_1, k_0, k_1, ivar1, mcol)
+  {
+    /* Phase 1: evaluate all stencil contributions in parallel. */
+    double *d0p = new double[ntotal];
+    for (i = 0; i < ntotal; i++)
+      d0p[i] = 0.0;
+    double *vals = dvector(0, nvar - 1);
+    derivs dpv;
+    dpv.d0 = d0p;
+    /* JFD_times_dv reads only dv.d0; the other derivs fields are unused. */
+    dpv.d1 = dpv.d2 = dpv.d3 = 0;
+    dpv.d11 = dpv.d12 = dpv.d13 = 0;
+    dpv.d22 = dpv.d23 = dpv.d33 = 0;
+
+#pragma omp for schedule(static)
+    for (i = 0; i < n1; i++)
+    {
+      for (j = 0; j < n2; j++)
+      {
+        for (k = 0; k < n3; k++)
+        {
+          for (ivar = 0; ivar < nvar; ivar++)
+          {
+            column = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            d0p[column] = 1.0;
+
+            i_0 = maximum2(0, i - 1);
+            i_1 = minimum2(N1, i + 1);
+            j_0 = maximum2(0, j - 1);
+            j_1 = minimum2(N2, j + 1);
+            k_0 = k - 1;
+            k_1 = k + 1;
+
+            int cnt = 0;
+            for (i1 = i_0; i1 <= i_1; i1++)
+            {
+              for (j1 = j_0; j1 <= j_1; j1++)
+              {
+                for (k1 = k_0; k1 <= k_1; k1++)
+                {
+                  JFD_times_dv(i1, j1, k1, nvar, n1, n2, n3,
+                               dpv, u, vals);
+                  for (ivar1 = 0; ivar1 < nvar; ivar1++)
+                  {
+                    if (vals[ivar1] != 0)
+                    {
+                      row = Index(ivar1, i1, j1, k1, nvar, n1, n2, n3);
+                      tmp_row[column * maxnbr + cnt] = row;
+                      tmp_val[column * maxnbr + cnt] = vals[ivar1];
+                      cnt += 1;
+                    }
+                  }
+                }
+              }
+            }
+            tmp_cnt[column] = cnt;
+            d0p[column] = 0.0;
+          }
+        }
+      }
+    }
+
+    free_dvector(vals, 0, nvar - 1);
+    delete[] d0p;
+  }
+
+  /* Phase 2: serial fill preserving the original (i,j,k) column order. */
   for (i = 0; i < n1; i++)
   {
     for (j = 0; j < n2; j++)
@@ -1798,51 +2047,112 @@ void TwoPunctures::SetMatrix_JFD(int nvar, int n1, int n2, int n3, derivs u,
         for (ivar = 0; ivar < nvar; ivar++)
         {
           column = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          dv.d0[column] = 1;
-
-          i_0 = maximum2(0, i - 1);
-          i_1 = minimum2(N1, i + 1);
-          j_0 = maximum2(0, j - 1);
-          j_1 = minimum2(N2, j + 1);
-          k_0 = k - 1;
-          k_1 = k + 1;
-          /*					i_0 = 0;
-                    i_1 = N1;
-                    j_0 = 0;
-                    j_1 = N2;
-                    k_0 = 0;
-                    k_1 = N3;*/
-
-          for (i1 = i_0; i1 <= i_1; i1++)
+          for (mcol = 0; mcol < tmp_cnt[column]; mcol++)
           {
-            for (j1 = j_0; j1 <= j_1; j1++)
-            {
-              for (k1 = k_0; k1 <= k_1; k1++)
-              {
-                JFD_times_dv(i1, j1, k1, nvar, n1, n2, n3,
-                             dv, u, values);
-                for (ivar1 = 0; ivar1 < nvar; ivar1++)
-                {
-                  if (values[ivar1] != 0)
-                  {
-                    row = Index(ivar1, i1, j1, k1, nvar, n1, n2, n3);
-                    mcol = ncols[row];
-                    cols[row][mcol] = column;
-                    Matrix[row][mcol] = values[ivar1];
-                    ncols[row] += 1;
-                  }
-                }
-              }
-            }
+            row = tmp_row[column * maxnbr + mcol];
+            cols[row][ncols[row]] = column;
+            Matrix[row][ncols[row]] = tmp_val[column * maxnbr + mcol];
+            ncols[row] += 1;
           }
-
-          dv.d0[column] = 0;
         }
       }
     }
   }
+
+  delete[] tmp_row;
+  delete[] tmp_val;
+  delete[] tmp_cnt;
+
   free_derivs(&dv, ntotal);
   free_dvector(values, 0, nvar - 1);
+}
+/* --------------------------------------------------------------------------*/
+void TwoPunctures::BuildLineFactors(int nvar, int n1, int n2, int n3,
+                                    int *ncols, int **cols, double **JFD)
+/* Precompute the LU factorization (with reciprocal diagonals) of every
+   tridiagonal line used by the relax() preconditioner. The tridiagonal
+   coefficients only depend on JFD, which is constant within a bicgstab
+   iteration, so this is done once per bicgstab call. The relax sweeps then
+   only assemble the right-hand side and do forward/backward substitution.
+   be-lines run along j for each (i,k); al-lines run along i for each (j,k). */
+{
+  int i, j, k, m, col, Ic, Ip, Im;
+
+  for (k = 0; k < n3; k++)
+  {
+    for (i = 0; i < n1; i++)
+    {
+      double diag[MAX_LINE_SIZE], e[MAX_LINE_SIZE], f[MAX_LINE_SIZE];
+      for (j = 0; j < n2; j++)
+      {
+        Ip = Index(0, i, j + 1, k, nvar, n1, n2, n3);
+        Ic = Index(0, i, j, k, nvar, n1, n2, n3);
+        Im = Index(0, i, j - 1, k, nvar, n1, n2, n3);
+        diag[j] = e[j] = f[j] = 0.0;
+        for (m = 0; m < ncols[Ic]; m++)
+        {
+          col = cols[Ic][m];
+          if (col == Im && j > 0)
+            f[j - 1] = JFD[Ic][m];
+          if (col == Ic)
+            diag[j] = JFD[Ic][m];
+          if (col == Ip && j < n2 - 1)
+            e[j] = JFD[Ic][m];
+        }
+      }
+      double *l = lu_be_l + (i * n3 + k) * n2;
+      double *u = lu_be_u + (i * n3 + k) * n2;
+      double *r = lu_be_r + (i * n3 + k) * n2;
+      u[0] = e[0];
+      r[0] = 1.0 / diag[0];
+      for (j = 0; j < n2 - 2; j++)
+      {
+        l[j] = f[j] * r[j];
+        u[j + 1] = e[j + 1];
+        r[j + 1] = 1.0 / (diag[j + 1] - l[j] * u[j]);
+      }
+      l[n2 - 2] = f[n2 - 2] * r[n2 - 2];
+      r[n2 - 1] = 1.0 / (diag[n2 - 1] - l[n2 - 2] * u[n2 - 2]);
+    }
+  }
+
+  for (k = 0; k < n3; k++)
+  {
+    for (j = 0; j < n2; j++)
+    {
+      double diag[MAX_LINE_SIZE], e[MAX_LINE_SIZE], f[MAX_LINE_SIZE];
+      for (i = 0; i < n1; i++)
+      {
+        Ip = Index(0, i + 1, j, k, nvar, n1, n2, n3);
+        Ic = Index(0, i, j, k, nvar, n1, n2, n3);
+        Im = Index(0, i - 1, j, k, nvar, n1, n2, n3);
+        diag[i] = e[i] = f[i] = 0.0;
+        for (m = 0; m < ncols[Ic]; m++)
+        {
+          col = cols[Ic][m];
+          if (col == Im && i > 0)
+            f[i - 1] = JFD[Ic][m];
+          if (col == Ic)
+            diag[i] = JFD[Ic][m];
+          if (col == Ip && i < n1 - 1)
+            e[i] = JFD[Ic][m];
+        }
+      }
+      double *l = lu_al_l + (j * n3 + k) * n1;
+      double *u = lu_al_u + (j * n3 + k) * n1;
+      double *r = lu_al_r + (j * n3 + k) * n1;
+      u[0] = e[0];
+      r[0] = 1.0 / diag[0];
+      for (i = 0; i < n1 - 2; i++)
+      {
+        l[i] = f[i] * r[i];
+        u[i + 1] = e[i + 1];
+        r[i + 1] = 1.0 / (diag[i + 1] - l[i] * u[i]);
+      }
+      l[n1 - 2] = f[n1 - 2] * r[n1 - 2];
+      r[n1 - 1] = 1.0 / (diag[n1 - 1] - l[n1 - 2] * u[n1 - 2]);
+    }
+  }
 }
 /* --------------------------------------------------------------------------*/
 void TwoPunctures::J_times_dv(int nvar, int n1, int n2, int n3, derivs dv, double *Jdv, derivs u)
@@ -1854,66 +2164,85 @@ void TwoPunctures::J_times_dv(int nvar, int n1, int n2, int n3, derivs dv, doubl
   double al, be, A, B, X, R, x, r, phi, y, z, Am1, *values;
   derivs dU, U;
 
-  Derivatives_AB3(nvar, n1, n2, n3, dv);
-
-  for (i = 0; i < n1; i++)
   {
-    values = dvector(0, nvar - 1);
+    double _a = omp_get_wtime();
+    Derivatives_AB3(nvar, n1, n2, n3, dv);
+    t_spec += omp_get_wtime() - _a;
+  }
+
+  /* Each (i,j,k) writes only Jdv[indx], so the point loop is embarrassingly
+     parallel.  values/dU/U are per-iteration temporaries; they are allocated
+     ONCE per OpenMP thread (outside the k loop) and reused across all points
+     that the thread visits, eliminating ~21 malloc/free calls per grid point.
+     Derivatives_AB3 above must stay serial: it writes the shared dv.d1..d33
+     arrays that every point reads.  Works with any nvar via heap buffers that
+     are hoisted per thread. */
+#pragma omp parallel shared(dv, Jdv, u, nvar, n1, n2, n3) private(i, j, k, ivar, indx)
+  {
+    double *values = dvector(0, nvar - 1);
+    derivs dU, U;
     allocate_derivs(&dU, nvar);
     allocate_derivs(&U, nvar);
-    for (j = 0; j < n2; j++)
+
+#pragma omp for schedule(static)
+    for (i = 0; i < n1; i++)
     {
-      for (k = 0; k < n3; k++)
+      for (j = 0; j < n2; j++)
       {
-
-        al = Pih * (2 * i + 1) / n1;
-        A = -cos(al);
-        be = Pih * (2 * j + 1) / n2;
-        B = -cos(be);
-        phi = 2. * Pi * k / n3;
-
-        Am1 = A - 1;
-        for (ivar = 0; ivar < nvar; ivar++)
+        for (k = 0; k < n3; k++)
         {
-          indx = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          dU.d0[ivar] = Am1 * dv.d0[indx];                     /* dU*/
-          dU.d1[ivar] = dv.d0[indx] + Am1 * dv.d1[indx];       /* dU_A*/
-          dU.d2[ivar] = Am1 * dv.d2[indx];                     /* dU_B*/
-          dU.d3[ivar] = Am1 * dv.d3[indx];                     /* dU_3*/
-          dU.d11[ivar] = 2 * dv.d1[indx] + Am1 * dv.d11[indx]; /* dU_AA*/
-          dU.d12[ivar] = dv.d2[indx] + Am1 * dv.d12[indx];     /* dU_AB*/
-          dU.d13[ivar] = dv.d3[indx] + Am1 * dv.d13[indx];     /* dU_AB*/
-          dU.d22[ivar] = Am1 * dv.d22[indx];                   /* dU_BB*/
-          dU.d23[ivar] = Am1 * dv.d23[indx];                   /* dU_B3*/
-          dU.d33[ivar] = Am1 * dv.d33[indx];                   /* dU_33*/
-          U.d0[ivar] = u.d0[indx];                             /* U   */
-          U.d1[ivar] = u.d1[indx];                             /* U_x*/
-          U.d2[ivar] = u.d2[indx];                             /* U_y*/
-          U.d3[ivar] = u.d3[indx];                             /* U_z*/
-          U.d11[ivar] = u.d11[indx];                           /* U_xx*/
-          U.d12[ivar] = u.d12[indx];                           /* U_xy*/
-          U.d13[ivar] = u.d13[indx];                           /* U_xz*/
-          U.d22[ivar] = u.d22[indx];                           /* U_yy*/
-          U.d23[ivar] = u.d23[indx];                           /* U_yz*/
-          U.d33[ivar] = u.d33[indx];                           /* U_zz*/
-        }
-        /* Calculation of (X,R) and*/
-        /* (dU_X, dU_R, dU_3, dU_XX, dU_XR, dU_X3, dU_RR, dU_R3, dU_33)*/
-        AB_To_XR(nvar, A, B, &X, &R, dU);
-        /* Calculation of (x,r) and*/
-        /* (dU, dU_x, dU_r, dU_3, dU_xx, dU_xr, dU_x3, dU_rr, dU_r3, dU_33)*/
-        C_To_c(nvar, X, R, &x, &r, dU);
-        /* Calculation of (y,z) and*/
-        /* (dU, dU_x, dU_y, dU_z, dU_xx, dU_xy, dU_xz, dU_yy, dU_yz, dU_zz)*/
-        rx3_To_xyz(nvar, x, r, phi, &y, &z, dU);
-        LinEquations(A, B, X, R, x, r, phi, y, z, dU, U, values);
-        for (ivar = 0; ivar < nvar; ivar++)
-        {
-          indx = Index(ivar, i, j, k, nvar, n1, n2, n3);
-          Jdv[indx] = values[ivar] * FAC;
+          double al, be, A, B, X, R, x, r, phi, y, z, Am1;
+
+          al = Pih * (2 * i + 1) / n1;
+          A = -cos(al);
+          be = Pih * (2 * j + 1) / n2;
+          B = -cos(be);
+          phi = 2. * Pi * k / n3;
+
+          Am1 = A - 1;
+          for (ivar = 0; ivar < nvar; ivar++)
+          {
+            indx = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            dU.d0[ivar] = Am1 * dv.d0[indx];                     /* dU*/
+            dU.d1[ivar] = dv.d0[indx] + Am1 * dv.d1[indx];       /* dU_A*/
+            dU.d2[ivar] = Am1 * dv.d2[indx];                     /* dU_B*/
+            dU.d3[ivar] = Am1 * dv.d3[indx];                     /* dU_3*/
+            dU.d11[ivar] = 2 * dv.d1[indx] + Am1 * dv.d11[indx]; /* dU_AA*/
+            dU.d12[ivar] = dv.d2[indx] + Am1 * dv.d12[indx];     /* dU_AB*/
+            dU.d13[ivar] = dv.d3[indx] + Am1 * dv.d13[indx];     /* dU_AB*/
+            dU.d22[ivar] = Am1 * dv.d22[indx];                   /* dU_BB*/
+            dU.d23[ivar] = Am1 * dv.d23[indx];                   /* dU_B3*/
+            dU.d33[ivar] = Am1 * dv.d33[indx];                   /* dU_33*/
+            U.d0[ivar] = u.d0[indx];                             /* U   */
+            U.d1[ivar] = u.d1[indx];                             /* U_x*/
+            U.d2[ivar] = u.d2[indx];                             /* U_y*/
+            U.d3[ivar] = u.d3[indx];                             /* U_z*/
+            U.d11[ivar] = u.d11[indx];                           /* U_xx*/
+            U.d12[ivar] = u.d12[indx];                           /* U_xy*/
+            U.d13[ivar] = u.d13[indx];                           /* U_xz*/
+            U.d22[ivar] = u.d22[indx];                           /* U_yy*/
+            U.d23[ivar] = u.d23[indx];                           /* U_yz*/
+            U.d33[ivar] = u.d33[indx];                           /* U_zz*/
+          }
+          /* Calculation of (X,R) and*/
+          /* (dU_X, dU_R, dU_3, dU_XX, dU_XR, dU_X3, dU_RR, dU_R3, dU_33)*/
+          AB_To_XR(nvar, A, B, &X, &R, dU);
+          /* Calculation of (x,r) and*/
+          /* (dU, dU_x, dU_r, dU_3, dU_xx, dU_xr, dU_x3, dU_rr, dU_r3, dU_33)*/
+          C_To_c(nvar, X, R, &x, &r, dU);
+          /* Calculation of (y,z) and*/
+          /* (dU, dU_x, dU_y, dU_z, dU_xx, dU_xy, dU_xz, dU_yy, dU_yz, dU_zz)*/
+          rx3_To_xyz(nvar, x, r, phi, &y, &z, dU);
+          LinEquations(A, B, X, R, x, r, phi, y, z, dU, U, values);
+          for (ivar = 0; ivar < nvar; ivar++)
+          {
+            indx = Index(ivar, i, j, k, nvar, n1, n2, n3);
+            Jdv[indx] = values[ivar] * FAC;
+          }
         }
       }
     }
+
     free_dvector(values, 0, nvar - 1);
     free_derivs(&dU, nvar);
     free_derivs(&U, nvar);
@@ -1923,34 +2252,65 @@ void TwoPunctures::J_times_dv(int nvar, int n1, int n2, int n3, derivs dv, doubl
 void TwoPunctures::relax(double *dv, int const nvar, int const n1, int const n2, int const n3,
                          double const *rhs, int const *ncols, int **cols, double **JFD)
 {
-  int i, j, k, n;
+  /* OpenMP red-black line relaxation.
+     The relaxation is a 3D red-black sweep: the k-planes are split into
+     even/odd passes, and within each plane the be-lines (along j) and
+     al-lines (along i) are ordered by red-black parity in i and j.  Every
+     phase only reads values of opposite parity, which are NOT modified
+     during that phase, so all lines of one phase are mutually independent
+     and can run in parallel.  The implicit barriers of the consecutive
+     `#pragma omp for` constructs preserve the exact sequential sweep order
+     (bit-identical results).  Each phase is collapsed over (k, parity-i)
+     or (k, parity-j) to expose ~(n3/2)*(n1/2) independent lines.
+     N_PlaneRelax sweeps are repeated per parity pass as in the serial code. */
 
-  for (k = 0; k < n3; k = k + 2)
+#pragma omp parallel default(none)                                    \
+    shared(dv, nvar, n1, n2, n3, rhs, ncols, cols, JFD, relax_wall, relax_calls)
   {
-    for (n = 0; n < N_PlaneRelax; n++)
+    const double t0 = omp_get_wtime();
+    for (int n = 0; n < N_PlaneRelax; n++)
     {
-      for (i = 2; i < n1; i = i + 2)
-        LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (i = 1; i < n1; i = i + 2)
-        LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (j = 1; j < n2; j = j + 2)
-        LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (j = 0; j < n2; j = j + 2)
-        LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 0; k < n3; k += 2)
+        for (int i = 2; i < n1; i += 2)
+          LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 0; k < n3; k += 2)
+        for (int i = 1; i < n1; i += 2)
+          LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 0; k < n3; k += 2)
+        for (int j = 1; j < n2; j += 2)
+          LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 0; k < n3; k += 2)
+        for (int j = 0; j < n2; j += 2)
+          LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
     }
-  }
-  for (k = 1; k < n3; k = k + 2)
-  {
-    for (n = 0; n < N_PlaneRelax; n++)
+    for (int n = 0; n < N_PlaneRelax; n++)
     {
-      for (i = 0; i < n1; i = i + 2)
-        LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (i = 1; i < n1; i = i + 2)
-        LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (j = 1; j < n2; j = j + 2)
-        LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-      for (j = 0; j < n2; j = j + 2)
-        LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 1; k < n3; k += 2)
+        for (int i = 0; i < n1; i += 2)
+          LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 1; k < n3; k += 2)
+        for (int i = 1; i < n1; i += 2)
+          LineRelax_be(dv, i, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 1; k < n3; k += 2)
+        for (int j = 1; j < n2; j += 2)
+          LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+#pragma omp for collapse(2) schedule(static)
+      for (int k = 1; k < n3; k += 2)
+        for (int j = 0; j < n2; j += 2)
+          LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
+    }
+    const double t1 = omp_get_wtime();
+#pragma omp master
+    {
+      relax_wall += t1 - t0;
+      relax_calls += 1;
     }
   }
 }
@@ -1963,82 +2323,44 @@ void TwoPunctures::LineRelax_be(double *dv,
 {
   int j, m, Ic, Ip, Im, col, ivar;
 
-  double *diag = new double[n2];
-  double *e = new double[n2 - 1]; /* above diagonal */
-  double *f = new double[n2 - 1]; /* below diagonal */
-  double *b = new double[n2];     /* rhs */
-  double *x = new double[n2];     /* solution vector */
+  double b[MAX_LINE_SIZE];
+  double x[MAX_LINE_SIZE];
+  double y[MAX_LINE_SIZE];
 
-  //  gsl_vector *diag = gsl_vector_alloc(n2);
-  //  gsl_vector *e = gsl_vector_alloc(n2-1); /* above diagonal */
-  //  gsl_vector *f = gsl_vector_alloc(n2-1); /* below diagonal */
-  //  gsl_vector *b = gsl_vector_alloc(n2);   /* rhs */
-  //  gsl_vector *x = gsl_vector_alloc(n2);   /* solution vector */
+  /* Precomputed LU factors for line (i,k) (see BuildLineFactors) */
+  const double *l = lu_be_l + (i * n3 + k) * n2;
+  const double *u = lu_be_u + (i * n3 + k) * n2;
+  const double *r = lu_be_r + (i * n3 + k) * n2;
 
   for (ivar = 0; ivar < nvar; ivar++)
   {
-    for (j = 0; j < n2 - 1; j++)
-    {
-      diag[j] = e[j] = f[j] = 0;
-    }
-    diag[n2 - 1] = 0;
-
-    //    gsl_vector_set_zero(diag);
-    //    gsl_vector_set_zero(e);
-    //    gsl_vector_set_zero(f);
     for (j = 0; j < n2; j++)
     {
       Ip = Index(ivar, i, j + 1, k, nvar, n1, n2, n3);
       Ic = Index(ivar, i, j, k, nvar, n1, n2, n3);
       Im = Index(ivar, i, j - 1, k, nvar, n1, n2, n3);
       b[j] = rhs[Ic];
-      //      gsl_vector_set(b,j,rhs[Ic]);
       for (m = 0; m < ncols[Ic]; m++)
       {
         col = cols[Ic][m];
         if (col != Ip && col != Ic && col != Im)
           b[j] -= JFD[Ic][m] * dv[col];
-        //          *gsl_vector_ptr(b, j) -= JFD[Ic][m] * dv[col];
-        else
-        {
-          if (col == Im && j > 0)
-            f[j - 1] = JFD[Ic][m];
-          //            gsl_vector_set(f,j-1,JFD[Ic][m]);
-          if (col == Ic)
-            diag[j] = JFD[Ic][m];
-          //            gsl_vector_set(diag,j,JFD[Ic][m]);
-          if (col == Ip && j < n2 - 1)
-            e[j] = JFD[Ic][m];
-          //            gsl_vector_set(e,j,JFD[Ic][m]);
-        }
       }
     }
-    //          A x = b
-    //          A = ( d_0 e_0  0   0  )
-    //              ( f_0 d_1 e_1  0  )
-    //              (  0  f_1 d_2 e_2 )
-    //              (  0   0  f_2 d_3 )
-    //
-    ThomasAlgorithm(n2, f, diag, e, x, b);
-    //    gsl_linalg_solve_tridiag(diag, e, f, b, x);
+    /* Forward substitution [L][y] = [b] */
+    y[0] = b[0];
+    for (j = 1; j < n2; j++)
+      y[j] = b[j] - l[j - 1] * y[j - 1];
+    /* Backward substitution [U][x] = [y] */
+    x[n2 - 1] = y[n2 - 1] * r[n2 - 1];
+    for (j = n2 - 2; j >= 0; j--)
+      x[j] = (y[j] - u[j] * x[j + 1]) * r[j];
     for (j = 0; j < n2; j++)
     {
       Ic = Index(ivar, i, j, k, nvar, n1, n2, n3);
       dv[Ic] = x[j];
-      //      dv[Ic] = gsl_vector_get(x, j);
     }
   }
-
-  delete[] diag;
-  delete[] e;
-  delete[] f;
-  delete[] b;
-  delete[] x;
-  //  gsl_vector_free(diag);
-  //  gsl_vector_free(e);
-  //  gsl_vector_free(f);
-  //  gsl_vector_free(b);
-  //  gsl_vector_free(x);
 }
 /* --------------------------------------------------------------------------*/
 void TwoPunctures::JFD_times_dv(int i, int j, int k, int nvar, int n1, int n2,
@@ -2208,127 +2530,46 @@ void TwoPunctures::LineRelax_al(double *dv,
 {
   int i, m, Ic, Ip, Im, col, ivar;
 
-  double *diag = new double[n1];
-  double *e = new double[n1 - 1]; /* above diagonal */
-  double *f = new double[n1 - 1]; /* below diagonal */
-  double *b = new double[n1];     /* rhs */
-  double *x = new double[n1];     /* solution vector */
+  double b[MAX_LINE_SIZE];
+  double x[MAX_LINE_SIZE];
+  double y[MAX_LINE_SIZE];
 
-  //  gsl_vector *diag = gsl_vector_alloc(n1);
-  //  gsl_vector *e = gsl_vector_alloc(n1-1); /* above diagonal */
-  //  gsl_vector *f = gsl_vector_alloc(n1-1); /* below diagonal */
-  //  gsl_vector *b = gsl_vector_alloc(n1);   /* rhs */
-  //  gsl_vector *x = gsl_vector_alloc(n1);   /* solution vector */
+  /* Precomputed LU factors for line (j,k) (see BuildLineFactors) */
+  const double *l = lu_al_l + (j * n3 + k) * n1;
+  const double *u = lu_al_u + (j * n3 + k) * n1;
+  const double *r = lu_al_r + (j * n3 + k) * n1;
 
   for (ivar = 0; ivar < nvar; ivar++)
   {
-    for (i = 0; i < n1 - 1; i++)
-    {
-      diag[i] = e[i] = f[i] = 0;
-    }
-    diag[n1 - 1] = 0;
-
-    //    gsl_vector_set_zero(diag);
-    //    gsl_vector_set_zero(e);
-    //    gsl_vector_set_zero(f);
     for (i = 0; i < n1; i++)
     {
       Ip = Index(ivar, i + 1, j, k, nvar, n1, n2, n3);
       Ic = Index(ivar, i, j, k, nvar, n1, n2, n3);
       Im = Index(ivar, i - 1, j, k, nvar, n1, n2, n3);
       b[i] = rhs[Ic];
-      //      gsl_vector_set(b,i,rhs[Ic]);
       for (m = 0; m < ncols[Ic]; m++)
       {
         col = cols[Ic][m];
         if (col != Ip && col != Ic && col != Im)
           b[i] -= JFD[Ic][m] * dv[col];
-        //          *gsl_vector_ptr(b, i) -= JFD[Ic][m] * dv[col];
-        else
-        {
-          if (col == Im && i > 0)
-            f[i - 1] = JFD[Ic][m];
-          //            gsl_vector_set(f,i-1,JFD[Ic][m]);
-          if (col == Ic)
-            diag[i] = JFD[Ic][m];
-          //            gsl_vector_set(diag,i,JFD[Ic][m]);
-          if (col == Ip && i < n1 - 1)
-            e[i] = JFD[Ic][m];
-          //            gsl_vector_set(e,i,JFD[Ic][m]);
-        }
       }
     }
-    ThomasAlgorithm(n1, f, diag, e, x, b);
-    //    gsl_linalg_solve_tridiag(diag, e, f, b, x);
+    /* Forward substitution [L][y] = [b] */
+    y[0] = b[0];
+    for (i = 1; i < n1; i++)
+      y[i] = b[i] - l[i - 1] * y[i - 1];
+    /* Backward substitution [U][x] = [y] */
+    x[n1 - 1] = y[n1 - 1] * r[n1 - 1];
+    for (i = n1 - 2; i >= 0; i--)
+      x[i] = (y[i] - u[i] * x[i + 1]) * r[i];
     for (i = 0; i < n1; i++)
     {
       Ic = Index(ivar, i, j, k, nvar, n1, n2, n3);
       dv[Ic] = x[i];
-      //      dv[Ic] = gsl_vector_get(x, i);
     }
   }
-
-  delete[] diag;
-  delete[] e;
-  delete[] f;
-  delete[] b;
-  delete[] x;
-
-  //  gsl_vector_free(diag);
-  //  gsl_vector_free(e);
-  //  gsl_vector_free(f);
-  //  gsl_vector_free(b);
-  //  gsl_vector_free(x);
 }
 /* -------------------------------------------------------------------------*/
-// a[N], b[N-1], c[N-1], x[N], q[N]
-//          A x = q
-//          A = ( a_0 c_0  0   0  )
-//              ( b_0 a_1 c_1  0  )
-//              (  0  b_1 a_2 c_2 )
-//              (  0   0  b_2 a_3 )
-//"Parallel Scientific Computing in C++ and MPI" P361
-void TwoPunctures::ThomasAlgorithm(int N, double *b, double *a, double *c, double *x, double *q)
-{
-  int i;
-  double *l, *u, *d, *y;
-  l = new double[N - 1];
-  u = new double[N - 1];
-  d = new double[N];
-  y = new double[N];
-
-  /* LU Decomposition */
-  d[0] = a[0];
-  u[0] = c[0];
-
-  for (i = 0; i < N - 2; i++)
-  {
-    l[i] = b[i] / d[i];
-    d[i + 1] = a[i + 1] - l[i] * u[i];
-    u[i + 1] = c[i + 1];
-  }
-
-  l[N - 2] = b[N - 2] / d[N - 2];
-  d[N - 1] = a[N - 1] - l[N - 2] * u[N - 2];
-
-  /* Forward Substitution [L][y] = [q] */
-  y[0] = q[0];
-  for (i = 1; i < N; i++)
-    y[i] = q[i] - l[i - 1] * y[i - 1];
-
-  /* Backward Substitution [U][x] = [y] */
-  x[N - 1] = y[N - 1] / d[N - 1];
-
-  for (i = N - 2; i >= 0; i--)
-    x[i] = (y[i] - u[i] * x[i + 1]) / d[i];
-
-  delete[] l;
-  delete[] u;
-  delete[] d;
-  delete[] y;
-
-  return;
-}
 // --------------------------------------------------------------------------*/
 // Calculates the value of v at an arbitrary position (x,y,z) if the spectral coefficients are know*/*/
 /* --------------------------------------------------------------------------*/
