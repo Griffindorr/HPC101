@@ -268,6 +268,11 @@ __device__ double d_symmetry_bd_1b(
 	int i1b, int j1b, int k1b, const double SoA[3]
 );
 
+__device__ double d_symmetry_bd_0b(
+	int ord, int extc0, int extc1, int extc2, const double* func,
+	int i0, int j0, int k0, double SoA0, double SoA1, double SoA2
+);
+
 __device__ void d_polin3_1b(
 	const double* x1a, const double* x2a, const double* x3a,
 	const double* ya, double x1, double x2, double x3,

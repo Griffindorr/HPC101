@@ -22,43 +22,25 @@ __device__ __forceinline__ double f_at_1b(const double* f, const int ex[3], int 
 	return f[((k1b - 1) * ex[1] + (j1b - 1)) * ex[0] + (i1b - 1)];
 }
 
+// Barycentric Lagrange 1D interpolation (O(n), equal-spaced nodes 0..ordn-1).
+// Mathematically equivalent to Neville/polint and the direct Lagrange sum.
+// Weights w_j = (-1)^(ordn-1-j) * C(ordn-1, j); any common scaling is allowed.
 __device__ void polint(const double* xa, const double* ya, double x, double& y, double& dy, int ordn) {
-	double c[MAX_ORDN], d[MAX_ORDN], den[MAX_ORDN], ho[MAX_ORDN];
-	int ns = 1;
-	double dif = fabs(x - xa[0]);
-	for (int m = 0; m < ordn; ++m) {
-		c[m] = ya[m];
-		d[m] = ya[m];
-		ho[m] = xa[m] - x;
-		double dift = fabs(x - xa[m]);
-		if (dift < dif) { ns = m + 1; dif = dift; }
+	// exact node hit -> avoid 0/0 in the barycentric ratio
+	for (int j = 0; j < ordn; ++j)
+		if (x == xa[j]) { y = ya[j]; dy = 0.0; return; }
+
+	double num = 0.0, den = 0.0;
+	for (int j = 0; j < ordn; ++j) {
+		double w = 1.0;
+		for (int k = 1; k <= j; ++k) w = w * (ordn - k) / k; // C(ordn-1, j)
+		if ((ordn - 1 - j) & 1) w = -w;                        // alternating sign
+		double t = w / (x - xa[j]);
+		num += t * ya[j];
+		den += t;
 	}
-	y = ya[ns - 1];
-	ns = ns - 1;
-	for (int m = 1; m < ordn; ++m) {
-		for (int i = 0; i < ordn - m; ++i) {
-			den[i] = ho[i] - ho[i + m];
-			if (den[i] == 0.0) {
-#if GPU_DEBUG_PRINT
-                printf("failure in polint for point %f\n", x);
-                printf("with input points: ");
-                for (int t = 0; t < ordn; ++t) printf("%f ", xa[t]);
-                printf("\n");
-#endif
-				y = NAN; dy = NAN; gpu_stop(); return;
-			}
-			den[i] = (c[i + 1] - d[i]) / den[i];
-			d[i] = ho[i + m] * den[i];
-			c[i] = ho[i] * den[i];
-		}
-		if (2 * ns < (ordn - m)) {
-			dy = c[ns];
-		} else {
-			dy = d[ns - 1];
-			ns = ns - 1;
-		}
-		y = y + dy;
-	}
+	y = num / den;
+	dy = 0.0;
 }
 
 __device__ void d_polin3_1b(
@@ -66,22 +48,69 @@ __device__ void d_polin3_1b(
 	const double* ya, double x1, double x2, double x3,
 	double& y, double& dy, int ordn
 ) {
+	// Barycentric weights for equal-spaced nodes 0..ordn-1, computed ONCE.
+	// w_j = (-1)^(ordn-1-j) * C(ordn-1, j)
+	double w[MAX_ORDN];
+	for (int j = 0; j < ordn; ++j) {
+		double wj = 1.0;
+		for (int k = 1; k <= j; ++k) wj = wj * (ordn - k) / k;   // C(ordn-1, j)
+		if ((ordn - 1 - j) & 1) wj = -wj;
+		w[j] = wj;
+	}
+
+	// Exact node hits -> avoid inf/0 in the barycentric ratio.
+	int hit3 = -1, hit2 = -1, hit1 = -1;
+	for (int j = 0; j < ordn; ++j) {
+		if (x3 == x3a[j]) hit3 = j;
+		if (x2 == x2a[j]) hit2 = j;
+		if (x1 == x1a[j]) hit1 = j;
+	}
+
+	// Precomputed weighted reciprocals per axis: 18 divisions total instead of
+	// ordn*(ordn*ordn+ordn+1) divisions in the per-call barycentric form.
+	double r3[MAX_ORDN], r2[MAX_ORDN], r1[MAX_ORDN];
+	if (hit3 < 0) for (int j = 0; j < ordn; ++j) r3[j] = w[j] / (x3 - x3a[j]);
+	if (hit2 < 0) for (int j = 0; j < ordn; ++j) r2[j] = w[j] / (x2 - x2a[j]);
+	if (hit1 < 0) for (int j = 0; j < ordn; ++j) r1[j] = w[j] / (x1 - x1a[j]);
+
 	double yatmp[MAX_ORDN * MAX_ORDN];
 	double ymtmp[MAX_ORDN];
 	double yntmp[MAX_ORDN];
-	double yqtmp[MAX_ORDN];
 
 	for (int i = 0; i < ordn; ++i) {
 		for (int j = 0; j < ordn; ++j) {
-			for (int k = 0; k < ordn; ++k) {
-				yqtmp[k] = ya[(k * ordn + j) * ordn + i];
+			double val;
+			if (hit3 >= 0) {
+				val = ya[(hit3 * ordn + j) * ordn + i];
+			} else {
+				double num = 0.0, den = 0.0;
+				for (int k = 0; k < ordn; ++k) {
+					double v = ya[(k * ordn + j) * ordn + i];
+					num += r3[k] * v;
+					den += r3[k];
+				}
+				val = num / den;
 			}
-			polint(x3a, yqtmp, x3, yatmp[j * ordn + i], dy, ordn);
+			yatmp[j * ordn + i] = val;
 		}
 		for (int j = 0; j < ordn; ++j) yntmp[j] = yatmp[j * ordn + i];
-		polint(x2a, yntmp, x2, ymtmp[i], dy, ordn);
+		if (hit2 >= 0) {
+			ymtmp[i] = yntmp[hit2];
+		} else {
+			double num = 0.0, den = 0.0;
+			for (int j = 0; j < ordn; ++j) { num += r2[j] * yntmp[j]; den += r2[j]; }
+			ymtmp[i] = num / den;
+		}
 	}
-	polint(x1a, ymtmp, x1, y, dy, ordn);
+
+	if (hit1 >= 0) {
+		y = ymtmp[hit1];
+	} else {
+		double num = 0.0, den = 0.0;
+		for (int j = 0; j < ordn; ++j) { num += r1[j] * ymtmp[j]; den += r1[j]; }
+		y = num / den;
+	}
+	dy = 0.0;
 }
 
 __device__ bool d_decide3d(
@@ -237,6 +266,32 @@ __device__ double d_symmetry_bd_1b(
 	if (kk < 1 || kk > extc[2]) return 0.0;
 
 	return f_at_1b(func, extc, ii, jj, kk) * factor;
+}
+
+// 0-based version of d_symmetry_bd_1b: takes 0-based coords and scalar SoA.
+__device__ double d_symmetry_bd_0b(
+	int ord, int extc0, int extc1, int extc2, const double* func,
+	int i0, int j0, int k0, double SoA0, double SoA1, double SoA2
+) {
+	int i1b = i0 + 1, j1b = j0 + 1, k1b = k0 + 1;
+	// out-of-range stays zero, matching funcc = 0.d0 initialization
+	if (i1b < -ord + 1 || i1b > extc0) return 0.0;
+	if (j1b < -ord + 1 || j1b > extc1) return 0.0;
+	if (k1b < -ord + 1 || k1b > extc2) return 0.0;
+
+	int ii = i1b, jj = j1b, kk = k1b;
+	double factor = 1.0;
+
+	if (ii <= 0) { ii = 1 - ii; factor *= SoA0; }
+	if (jj <= 0) { jj = 1 - jj; factor *= SoA1; }
+	if (kk <= 0) { kk = 1 - kk; factor *= SoA2; }
+
+	if (ii < 1 || ii > extc0) return 0.0;
+	if (jj < 1 || jj > extc1) return 0.0;
+	if (kk < 1 || kk > extc2) return 0.0;
+
+	const int ex[3] = {extc0, extc1, extc2};
+	return f_at_1b(func, ex, ii, jj, kk) * factor;
 }
 
 __global__ void lowerboundset_kernel(int n, double* chi0, double TINNY) {

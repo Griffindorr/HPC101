@@ -191,8 +191,9 @@ bool Patch::Interp_N_Points_GPU(
     int NN, double *d_XX_0, double *d_XX_1, double *d_XX_2,
     double *d_shellf, int *d_weight, int Symmetry
 ) {
-    int myrank;
+    int myrank, cpusize;
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &cpusize);
 
     int ordn = 2 * ghost_width;
     MyList<var> *varl;
@@ -246,6 +247,10 @@ bool Patch::Interp_N_Points_GPU(
 
     GPUManager::getInstance().synchronize_all();
     
+    if (cpusize == 1) {
+        // 1 rank: Allreduce is identity; skip D2H/H2D staging.
+        return true;
+    }
     double *h_shellf_local = new double[NN * num_var];
     double *h_shellf_global = new double[NN * num_var];
     cudaMemcpy(h_shellf_local, d_shellf, NN * num_var * sizeof(double), cudaMemcpyDeviceToHost);

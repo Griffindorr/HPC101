@@ -81,6 +81,12 @@ void gpu_prolong3_launch(
     const double* SoA, int Symmetry
 );
 
+
+
+
+
+
+
 void gpu_restrict3_launch(
     cudaStream_t stream,
     const double* d_src_f, double* d_dst_c,

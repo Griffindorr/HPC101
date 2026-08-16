@@ -48,18 +48,56 @@ __global__ void sommerfeld_rout_kernel(
     int Symmetry,
     int precor
 ) {
-    int i0 = blockIdx.x * blockDim.x + threadIdx.x;
-    int j0 = blockIdx.y * blockDim.y + threadIdx.y;
-    int k0 = blockIdx.z * blockDim.z + threadIdx.z;
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (i0 >= ex0 || j0 >= ex1 || k0 >= ex2) return;
+    // Only map threads to the 6 outer faces instead of the whole volume.
+    int s0 = ex1 * ex2;
+    int s1 = s0 + ex1 * ex2;
+    int s2 = s1 + ex0 * ex2;
+    int s3 = s2 + ex0 * ex2;
+    int s4 = s3 + ex0 * ex1;
+    int s5 = s4 + ex0 * ex1;
+    if (t >= s5) return;
+
+    int i0, j0, k0;
+    if (t < s0) {
+        i0 = 0;
+        int u = t;
+        j0 = u / ex2;
+        k0 = u % ex2;
+    } else if (t < s1) {
+        i0 = ex0 - 1;
+        int u = t - s0;
+        j0 = u / ex2;
+        k0 = u % ex2;
+    } else if (t < s2) {
+        j0 = 0;
+        int u = t - s1;
+        i0 = u / ex2;
+        k0 = u % ex2;
+    } else if (t < s3) {
+        j0 = ex1 - 1;
+        int u = t - s2;
+        i0 = u / ex2;
+        k0 = u % ex2;
+    } else if (t < s4) {
+        k0 = 0;
+        int u = t - s3;
+        i0 = u / ex1;
+        j0 = u % ex1;
+    } else {
+        k0 = ex2 - 1;
+        int u = t - s4;
+        i0 = u / ex1;
+        j0 = u % ex1;
+    }
 
     // 转换为 Fortran 的 1-based 索引
     int i = i0 + 1;
     int j = j0 + 1;
     int k = k0 + 1;
 
-    // 仅当属于边界时才继续执行计算
+    // 仅当属于边界时才继续执行计算 (skip symmetry-hidden lower faces)
     if (!is_sommerfeld_boundary(i, j, k, ex0, ex1, ex2, X, Y, Z, xmin, ymin, zmin, xmax, ymax, zmax, Symmetry)) {
         return;
     }
@@ -293,10 +331,9 @@ void gpu_sommerfeld_rout_launch(
     const double* d_f0, double* d_f, const double SoA[3],
     int Symmetry, int precor
 ) {
-    dim3 block(8, 8, 4);
-    dim3 grid((ex[0] + block.x - 1) / block.x, 
-              (ex[1] + block.y - 1) / block.y, 
-              (ex[2] + block.z - 1) / block.z);
+    int total = 2 * (ex[1] * ex[2] + ex[0] * ex[2] + ex[0] * ex[1]);
+    int block = 256;
+    dim3 grid((total + block - 1) / block);
 
     sommerfeld_rout_kernel<<<grid, block, 0, stream>>>(
         ex[0], ex[1], ex[2], d_X, d_Y, d_Z, xmin, ymin, zmin, xmax, ymax, zmax,

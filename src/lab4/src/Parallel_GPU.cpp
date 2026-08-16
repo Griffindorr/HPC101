@@ -562,8 +562,9 @@ bool Parallel::PatList_Interp_Points_GPU(
     double *d_Shellf,
     int Symmetry
 ) {
-    int myrank;
+    int myrank, cpusize;
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &cpusize);
 
     MyList<var> *varl = VarList;
     int num_var = 0;
@@ -699,25 +700,38 @@ bool Parallel::PatList_Interp_Points_GPU(
 
     GPUManager::getInstance().synchronize_all();
 
-#if MPI_CUDA_AWARE
-    
-#else
-    double *h_local_shellf = new double[NN * num_var];
-    int    *h_local_weight = new int[NN];
-    GPUManager::getInstance().sync_to_cpu(h_local_shellf, d_local_shellf, NN * num_var);
-    cudaMemcpy(h_local_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToHost);
-
-    double *h_global_shellf = new double[NN * num_var];
-    int    *h_global_weight = new int[NN];
-
-    MPI_Allreduce(h_local_shellf, h_global_shellf, NN * num_var, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(h_local_weight, h_global_weight, NN, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-#endif
-    GPUManager::getInstance().sync_to_gpu(h_global_shellf, d_Shellf, NN * num_var);
-    
-    int *d_global_weight; 
+    int *d_global_weight;
     cudaMalloc(&d_global_weight, NN * sizeof(int));
-    cudaMemcpy(d_global_weight, h_global_weight, NN * sizeof(int), cudaMemcpyHostToDevice);
+    if (cpusize == 1) {
+        // 1 rank: Allreduce is identity, so the D2H -> host Allreduce -> H2D
+        // staging is pure overhead. Copy device-to-device instead.
+        cudaMemcpy(d_Shellf, d_local_shellf, NN * num_var * sizeof(double), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_global_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToDevice);
+    } else {
+#if MPI_CUDA_AWARE
+        cudaMemcpy(d_Shellf, d_local_shellf, NN * num_var * sizeof(double), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_global_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToDevice);
+#else
+        double *h_local_shellf = new double[NN * num_var];
+        int    *h_local_weight = new int[NN];
+        GPUManager::getInstance().sync_to_cpu(h_local_shellf, d_local_shellf, NN * num_var);
+        cudaMemcpy(h_local_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToHost);
+
+        double *h_global_shellf = new double[NN * num_var];
+        int    *h_global_weight = new int[NN];
+
+        MPI_Allreduce(h_local_shellf, h_global_shellf, NN * num_var, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(h_local_weight, h_global_weight, NN, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+        GPUManager::getInstance().sync_to_gpu(h_global_shellf, d_Shellf, NN * num_var);
+        cudaMemcpy(d_global_weight, h_global_weight, NN * sizeof(int), cudaMemcpyHostToDevice);
+
+        delete[] h_local_shellf;
+        delete[] h_local_weight;
+        delete[] h_global_shellf;
+        delete[] h_global_weight;
+#endif
+    }
 
     int *d_err_flag;
     cudaMalloc(&d_err_flag, sizeof(int));
@@ -735,10 +749,6 @@ bool Parallel::PatList_Interp_Points_GPU(
         success = false;
     }
 
-    delete[] h_local_shellf; 
-    delete[] h_local_weight;
-    delete[] h_global_shellf; 
-    delete[] h_global_weight;
     GPUManager::getInstance().free_device_memory(d_local_shellf, NN * num_var);
     cudaFree(d_local_weight);
     cudaFree(d_global_weight);
