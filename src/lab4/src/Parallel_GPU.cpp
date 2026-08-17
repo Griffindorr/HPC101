@@ -221,6 +221,31 @@ void Parallel::gpu_transfer(
     double **rec_data_h  = new double *[cpusize]; // CPU 接收暂存
     int length;
 
+    // Reused device staging buffers: gpu_transfer is called for every ghost /
+    // buffer exchange (dozens per step), and allocating + freeing a device
+    // buffer each call costs ~50-100us of serialized host time plus forces
+    // device syncs. Keep one growable buffer per (direction, node) instead.
+    // Reuse is safe: each call ends with GPUManager::synchronize_all() inside
+    // gpu_data_packer, so the previous call's kernels have completed before a
+    // buffer is written again.
+    static double** s_send_d = nullptr;
+    static double** s_rec_d  = nullptr;
+    static size_t*  s_send_cap = nullptr;
+    static size_t*  s_rec_cap  = nullptr;
+    static int      s_cached_cpusize = 0;
+    if (s_cached_cpusize != cpusize) {
+        if (s_send_d) { for (int n = 0; n < s_cached_cpusize; n++) if (s_send_d[n]) cudaFree(s_send_d[n]); }
+        if (s_rec_d)  { for (int n = 0; n < s_cached_cpusize; n++) if (s_rec_d[n]) cudaFree(s_rec_d[n]); }
+        delete[] s_send_d; delete[] s_rec_d;
+        delete[] s_send_cap; delete[] s_rec_cap;
+        s_send_d = new double*[cpusize];
+        s_rec_d  = new double*[cpusize];
+        s_send_cap = new size_t[cpusize];
+        s_rec_cap  = new size_t[cpusize];
+        for (int n = 0; n < cpusize; n++) { s_send_d[n] = nullptr; s_rec_d[n] = nullptr; s_send_cap[n] = 0; s_rec_cap[n] = 0; }
+        s_cached_cpusize = cpusize;
+    }
+
     // puts("Starting GPU transfer...");
     for (node = 0; node < cpusize; node++) {
         send_data_d[node] = rec_data_d[node] = nullptr;
@@ -228,14 +253,24 @@ void Parallel::gpu_transfer(
 
         if (node == myrank) { // 同节点 D2D 直接拷贝，不涉及 MPI
             if ((length = gpu_data_packer(0, src[myrank], dst[myrank], node, PACK, VarList1, VarList2, Symmetry))) {
-                CUDA_CHECK(cudaMalloc((void**)&rec_data_d[node], length * sizeof(double)));
+                if ((size_t)length > s_rec_cap[node]) {
+                    if (s_rec_d[node]) cudaFree(s_rec_d[node]);
+                    cudaMalloc((void**)&s_rec_d[node], length * sizeof(double));
+                    s_rec_cap[node] = length;
+                }
+                rec_data_d[node] = s_rec_d[node];
                 gpu_data_packer(rec_data_d[node], src[myrank], dst[myrank], node, PACK, VarList1, VarList2, Symmetry);
             }
         }
         else { // 跨节点通信，走 CPU Staging
             // PACK 阶段
             if ((length = gpu_data_packer(0, src[myrank], dst[myrank], node, PACK, VarList1, VarList2, Symmetry))) {
-                CUDA_CHECK(cudaMalloc((void**)&send_data_d[node], length * sizeof(double)));
+                if ((size_t)length > s_send_cap[node]) {
+                    if (s_send_d[node]) cudaFree(s_send_d[node]);
+                    cudaMalloc((void**)&s_send_d[node], length * sizeof(double));
+                    s_send_cap[node] = length;
+                }
+                send_data_d[node] = s_send_d[node];
                 send_data_h[node] = new double[length]; // 分配 CPU 内存
 
                 // 1. GPU 内部完成打包
@@ -249,7 +284,12 @@ void Parallel::gpu_transfer(
             }
             // UNPACK 的准备阶段
             if ((length = gpu_data_packer(0, src[node], dst[node], node, UNPACK, VarList1, VarList2, Symmetry))) {
-                CUDA_CHECK(cudaMalloc((void**)&rec_data_d[node], length * sizeof(double)));
+                if ((size_t)length > s_rec_cap[node]) {
+                    if (s_rec_d[node]) cudaFree(s_rec_d[node]);
+                    cudaMalloc((void**)&s_rec_d[node], length * sizeof(double));
+                    s_rec_cap[node] = length;
+                }
+                rec_data_d[node] = s_rec_d[node];
                 rec_data_h[node] = new double[length]; // 分配 CPU 内存
                 
                 // 接收到 CPU 内存
@@ -282,10 +322,8 @@ void Parallel::gpu_transfer(
         }
     }
         
-    // 释放所有资源
+    // 释放所有资源 (device staging buffers are reused statics, kept alive)
     for (node = 0; node < cpusize; node++) {
-        if (send_data_d[node]) CUDA_CHECK(cudaFree(send_data_d[node]));
-        if (rec_data_d[node]) CUDA_CHECK(cudaFree(rec_data_d[node]));
         if (send_data_h[node]) delete[] send_data_h[node];
         if (rec_data_h[node]) delete[] rec_data_h[node];
     }
