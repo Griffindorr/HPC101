@@ -123,23 +123,38 @@ void Patch::Interp_Points_GPU(
     // 注：如果你使用的 MPI 版本(如 OpenMPI)支持 CUDA-aware，可以直接把 device 指针塞给 MPI！
     // 下面写的是安全通用的做法（拷回 Host -> MPI_Allreduce -> 拷回 Device）
     // =================================================================================
+    int *d_global_weight; cudaMalloc(&d_global_weight, NN * sizeof(int));
+    int *h_global_weight = new int[NN];
 #if MPI_CUDA_AWARE
     MPI_Allreduce(d_Shellf, d_local_shellf, NN * num_var, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    cudaMemcpy(d_global_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToDevice);
 #else
-    double *h_local_shellf = new double[NN * num_var];
-    int    *h_local_weight = new int[NN];
-    GPUManager::getInstance().sync_to_cpu(h_local_shellf, d_local_shellf, NN * num_var);
-    cudaMemcpy(h_local_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToHost);
+    int cpusize;
+    MPI_Comm_size(MPI_COMM_WORLD, &cpusize);
+    if (cpusize == 1) {
+        // 1 rank: Allreduce is identity; skip D2H/H2D staging (avoids ~864KB
+        // D2H + H2D round trips on every wave-extraction / ADM-mass analysis).
+        CUDA_CHECK(cudaMemcpy(d_Shellf, d_local_shellf, NN * num_var * sizeof(double), cudaMemcpyDeviceToDevice));
+        CUDA_CHECK(cudaMemcpy(d_global_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToDevice));
+        memset(h_global_weight, 1, NN * sizeof(int));
+    } else {
+        double *h_local_shellf = new double[NN * num_var];
+        int    *h_local_weight = new int[NN];
+        GPUManager::getInstance().sync_to_cpu(h_local_shellf, d_local_shellf, NN * num_var);
+        cudaMemcpy(h_local_weight, d_local_weight, NN * sizeof(int), cudaMemcpyDeviceToHost);
 
-    double *h_global_shellf = new double[NN * num_var];
-    int    *h_global_weight = new int[NN];
+        double *h_global_shellf = new double[NN * num_var];
 
-    MPI_Allreduce(h_local_shellf, h_global_shellf, NN * num_var, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(h_local_weight, h_global_weight, NN, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(h_local_shellf, h_global_shellf, NN * num_var, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(h_local_weight, h_global_weight, NN, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-    GPUManager::getInstance().sync_to_gpu(h_global_shellf, d_Shellf, NN * num_var);
-    int *d_global_weight; cudaMalloc(&d_global_weight, NN * sizeof(int));
-    cudaMemcpy(d_global_weight, h_global_weight, NN * sizeof(int), cudaMemcpyHostToDevice);
+        GPUManager::getInstance().sync_to_gpu(h_global_shellf, d_Shellf, NN * num_var);
+        cudaMemcpy(d_global_weight, h_global_weight, NN * sizeof(int), cudaMemcpyHostToDevice);
+
+        delete[] h_local_shellf;
+        delete[] h_local_weight;
+        delete[] h_global_shellf;
+    }
 #endif
 
     int *d_err_flag;
@@ -178,8 +193,7 @@ void Patch::Interp_Points_GPU(
     }
 
     delete[] DH; delete[] llb; delete[] uub;
-    delete[] h_local_shellf; delete[] h_local_weight;
-    delete[] h_global_shellf; delete[] h_global_weight;
+    delete[] h_global_weight;
     GPUManager::getInstance().free_device_memory(d_local_shellf, NN * num_var);
     CUDA_CHECK(cudaFree(d_local_weight));
     CUDA_CHECK(cudaFree(d_global_weight));
