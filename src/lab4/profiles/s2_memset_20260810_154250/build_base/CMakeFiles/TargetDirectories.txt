@@ -1,4 +1,0 @@
-/home/h3240105662/hpc101/src/lab4/profiles/s2_memset_20260810_154250/build_base/CMakeFiles/ABE.dir
-/home/h3240105662/hpc101/src/lab4/profiles/s2_memset_20260810_154250/build_base/CMakeFiles/TwoPunctureABE.dir
-/home/h3240105662/hpc101/src/lab4/profiles/s2_memset_20260810_154250/build_base/CMakeFiles/edit_cache.dir
-/home/h3240105662/hpc101/src/lab4/profiles/s2_memset_20260810_154250/build_base/CMakeFiles/rebuild_cache.dir
