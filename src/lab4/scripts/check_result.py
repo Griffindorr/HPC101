@@ -96,12 +96,10 @@ def match_trajectory_times(reference, target, tolerance):
         ):
             target_index += 1
 
-        # Target exhausted: stop matching and compute RMS on the matched
-        # prefix. Mirrors AMSS/cal_RMS.py, which uses M = min(len1, len2).
-        if target_index >= len(target):
-            break
-
-        if abs(target[target_index][0] - reference_time) > tolerance:
+        if (
+            target_index >= len(target)
+            or abs(target[target_index][0] - reference_time) > tolerance
+        ):
             raise CheckError(
                 f"time coverage incomplete: matched {len(matches)}/{len(reference)}; "
                 f"no unused target time within {tolerance:.3g} of "
@@ -110,13 +108,6 @@ def match_trajectory_times(reference, target, tolerance):
 
         matches.append((reference_row, target[target_index]))
         target_index += 1
-
-    if len(matches) < len(reference):
-        print(
-            f"Warning: target has fewer timesteps than golden - "
-            f"matched {len(matches)}/{len(reference)} golden timesteps, "
-            f"RMS computed on the matched prefix"
-        )
 
     return matches
 
@@ -226,18 +217,6 @@ def unique_candidates(paths):
     return result
 
 
-def existing_lab_roots(primary):
-    candidates = unique_candidates(
-        [
-            primary,
-            Path(__file__).absolute().parent.parent,
-            Path(__file__).resolve().parent.parent,
-            Path.home() / "hpc101" / "src" / "lab4",
-        ]
-    )
-    return [path for path in candidates if (path / "AMSS_NCKU_Input.py").is_file()]
-
-
 def locate_result_directory(path):
     candidates = unique_candidates(
         [
@@ -290,14 +269,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    lab_root_env = os.environ.get("AMSS_LAB_DIR")
-    if lab_root_env:
-        root = Path(lab_root_env).expanduser().absolute()
-    else:
-        root = Path(__file__).absolute().parent.parent
-    lab_roots = existing_lab_roots(root)
-    if lab_roots:
-        root = lab_roots[0]
+    root = Path(__file__).resolve().parent.parent
 
     # AMSS_OUTPUT_ROOT (default: lab root) is the parent of the run
     # directory. Default RESULT_DIR and relative explicit RESULT_DIR both
@@ -310,37 +282,22 @@ def main():
         output_root = root
 
     try:
-        result_paths = []
         if args.result_dir is None:
-            for candidate_root in lab_roots or [root]:
-                file_directory = read_config_string(
-                    candidate_root / "AMSS_NCKU_Input.py", "File_directory"
-                )
-                # Absolute File_directory is honored; relative File_directory
-                # resolves against AMSS_OUTPUT_ROOT first, then lab-root fallbacks.
-                result_paths.append(
-                    resolve_path(output_root, file_directory) / "AMSS_NCKU_output"
-                )
-                result_paths.append(
-                    resolve_path(candidate_root, file_directory) / "AMSS_NCKU_output"
-                )
+            file_directory = read_config_string(
+                root / "AMSS_NCKU_Input.py", "File_directory"
+            )
+            # Absolute File_directory is honored; relative File_directory
+            # resolves against AMSS_OUTPUT_ROOT (or lab root if unset).
+            result_path = resolve_path(output_root, file_directory) / "AMSS_NCKU_output"
         else:
             # Explicit RESULT_DIR: absolute paths kept; relative paths
             # resolve against AMSS_OUTPUT_ROOT (or lab root if unset).
-            result_paths.append(resolve_path(output_root, args.result_dir))
+            result_path = resolve_path(output_root, args.result_dir)
 
         # GOLDEN_DIR stays relative to the lab root so the shipped golden
         # data is found regardless of where the run was written.
         golden_path = resolve_path(root, args.golden_dir or "golden")
-        result_error = None
-        for result_path in unique_candidates(result_paths):
-            try:
-                result_directory = locate_result_directory(result_path)
-                break
-            except CheckError as exc:
-                result_error = exc
-        else:
-            raise result_error or CheckError("cannot determine result directory")
+        result_directory = locate_result_directory(result_path)
         golden_directory = locate_golden_directory(golden_path)
     except CheckError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -19,12 +19,6 @@ export OMPI_ALLOW_RUN_AS_ROOT="${OMPI_ALLOW_RUN_AS_ROOT:-1}"
 export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="${OMPI_ALLOW_RUN_AS_ROOT_CONFIRM:-1}"
 AMSS_MPIEXEC="${AMSS_MPIEXEC:-mpiexec --allow-run-as-root}"
 
-# TwoPunctureABE-specific OpenMP thread count: consumed by the
-# TwoPunctures constructor (getenv -> omp_set_num_threads). Overridable;
-# when unset by the caller it defaults to 16 for local runs. The evaluation
-# environment does not go through run.sh, so its behavior is unchanged.
-export AMSS_TWOP_OMP_THREADS="${AMSS_TWOP_OMP_THREADS:-16}"
-
 ROOT_DIR="$(pwd)"
 PYTHON="${PYTHON:-python3}"
 
@@ -34,14 +28,6 @@ resolve_under_root() {
      *) printf '%s/%s' "$ROOT_DIR" "$1" ;;
   esac
 }
-
-# HPC node images may preset these paths to an ephemeral /workspace volume.
-# Resolve them under the shared lab root so separate jobs can reuse outputs.
-for _v in AMSS_BUILD_DIR AMSS_OUTPUT_ROOT AMSS_CACHE_DIR; do
-  case "${!_v:-}" in
-    /workspace/*) eval "unset $_v" ;;
-  esac
-done
 
 AMSS_BUILD_DIR="$(resolve_under_root "${AMSS_BUILD_DIR:-$ROOT_DIR/build}")"
 AMSS_OUTPUT_ROOT="$(resolve_under_root "${AMSS_OUTPUT_ROOT:-$ROOT_DIR}")"
