@@ -54,16 +54,6 @@ private:
        double *lu_be_l, *lu_be_u, *lu_be_r;
        double *lu_al_l, *lu_al_u, *lu_al_r;
 
-       /* Profiling counters: wall time spent inside the OpenMP region of
-          relax(), and how many times relax() was entered.  Only the master
-          thread accumulates (see relax()). */
-       double relax_wall;
-       long   relax_calls;
-
-       /* Serial-phase profiling inside bicgstab() (accumulated by the calling
-          thread; only meaningful for a single MPI rank). */
-       double t_F_of_v, t_SetJFD, t_BuildLF, t_J_times_dv, t_spec;
-
        struct parameters
        {
               int nvar, n1, n2, n3;

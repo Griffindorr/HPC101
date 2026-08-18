@@ -79,10 +79,6 @@ TwoPunctures::TwoPunctures(double mp, double mm, double b,
   lu_al_l = new double[ntotal];
   lu_al_u = new double[ntotal];
   lu_al_r = new double[ntotal];
-
-  relax_wall = 0.0;
-  relax_calls = 0;
-  t_F_of_v = t_SetJFD = t_BuildLF = t_J_times_dv = t_spec = 0.0;
 }
 
 TwoPunctures::~TwoPunctures()
@@ -1378,7 +1374,6 @@ void TwoPunctures::Newton(int const nvar, int const n1, int const n2, int const 
   int ntotal = n1 * n2 * n3 * nvar, ii, it;
   double *F, dmax, normres;
   derivs u, dv;
-  const double _nw0 = omp_get_wtime();
 
   F = dvector(0, ntotal - 1);
   allocate_derivs(&dv, ntotal);
@@ -1417,7 +1412,6 @@ void TwoPunctures::Newton(int const nvar, int const n1, int const n2, int const 
   }
 
   printf("Newton: it=%d \t |F|=%e \n", it, (double)dmax);
-  printf("Newton wall: %.3f s\n", omp_get_wtime() - _nw0);
 
   fflush(stdout);
 
@@ -1638,21 +1632,9 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   cols = imatrix(0, ntotal - 1, 0, maxcol - 1);
   ncols = ivector(0, ntotal - 1);
 
-  {
-    double _a = omp_get_wtime();
-    F_of_v(nvar, n1, n2, n3, v, F, u);
-    t_F_of_v += omp_get_wtime() - _a;
-  }
-  {
-    double _a = omp_get_wtime();
-    SetMatrix_JFD(nvar, n1, n2, n3, u, ncols, cols, JFD);
-    t_SetJFD += omp_get_wtime() - _a;
-  }
-  {
-    double _a = omp_get_wtime();
-    BuildLineFactors(nvar, n1, n2, n3, ncols, cols, JFD);
-    t_BuildLF += omp_get_wtime() - _a;
-  }
+  F_of_v(nvar, n1, n2, n3, v, F, u);
+  SetMatrix_JFD(nvar, n1, n2, n3, u, ncols, cols, JFD);
+  BuildLineFactors(nvar, n1, n2, n3, ncols, cols, JFD);
 
   /* temporary storage */
   r = dvector(0, ntotal - 1);
@@ -1674,11 +1656,7 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   }
 
   /* compute initial residual rt = r = F - J*dv */
-  {
-    double _a = omp_get_wtime();
-    J_times_dv(nvar, n1, n2, n3, dv, r, u);
-    t_J_times_dv += omp_get_wtime() - _a;
-  }
+  J_times_dv(nvar, n1, n2, n3, dv, r, u);
   for (int j = 0; j < ntotal; j++)
     rt[j] = r[j] = F[j] - r[j];
 
@@ -1719,9 +1697,7 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
       relax(ph.d0, nvar, n1, n2, n3, p, ncols, cols, JFD);
 
     {
-      double _a = omp_get_wtime();
       J_times_dv(nvar, n1, n2, n3, ph, vv, u); /* vv=J*ph*/
-      t_J_times_dv += omp_get_wtime() - _a;
     }
     alpha = rho / scalarproduct(rt, vv, ntotal);
     for (int j = 0; j < ntotal; j++)
@@ -1749,9 +1725,7 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
       relax(sh.d0, nvar, n1, n2, n3, s, ncols, cols, JFD);
 
     {
-      double _a = omp_get_wtime();
       J_times_dv(nvar, n1, n2, n3, sh, t, u); /* t=J*sh*/
-      t_J_times_dv += omp_get_wtime() - _a;
     }
     omega = scalarproduct(t, s, ntotal) / scalarproduct(t, t, ntotal);
 
@@ -1794,11 +1768,6 @@ int TwoPunctures::bicgstab(int const nvar, int const n1, int const n2, int const
   free_dmatrix(JFD, 0, ntotal - 1, 0, maxcol - 1);
   free_imatrix(cols, 0, ntotal - 1, 0, maxcol - 1);
   free_ivector(ncols, 0, ntotal - 1);
-
-  printf("relax profile: calls=%ld  omp-wall=%.3f s\n", relax_calls, relax_wall);
-  printf("serial profile: F_of_v=%.3f  SetJFD=%.3f  BuildLF=%.3f  J_times_dv=%.3f  (spec=%.3f) s\n",
-         t_F_of_v, t_SetJFD, t_BuildLF, t_J_times_dv, t_spec);
-  fflush(stdout);
 
   /* iteration failed */
   if (ii > itmax)
@@ -2188,9 +2157,7 @@ void TwoPunctures::J_times_dv(int nvar, int n1, int n2, int n3, derivs dv, doubl
   derivs dU, U;
 
   {
-    double _a = omp_get_wtime();
     Derivatives_AB3(nvar, n1, n2, n3, dv);
-    t_spec += omp_get_wtime() - _a;
   }
 
   /* Each (i,j,k) writes only Jdv[indx], so the point loop is embarrassingly
@@ -2288,9 +2255,8 @@ void TwoPunctures::relax(double *dv, int const nvar, int const n1, int const n2,
      N_PlaneRelax sweeps are repeated per parity pass as in the serial code. */
 
 #pragma omp parallel default(none)                                    \
-    shared(dv, nvar, n1, n2, n3, rhs, ncols, cols, JFD, relax_wall, relax_calls)
+    shared(dv, nvar, n1, n2, n3, rhs, ncols, cols, JFD)
   {
-    const double t0 = omp_get_wtime();
     for (int n = 0; n < N_PlaneRelax; n++)
     {
 #pragma omp for collapse(2) schedule(static)
@@ -2328,12 +2294,6 @@ void TwoPunctures::relax(double *dv, int const nvar, int const n1, int const n2,
       for (int k = 1; k < n3; k += 2)
         for (int j = 0; j < n2; j += 2)
           LineRelax_al(dv, j, k, nvar, n1, n2, n3, rhs, ncols, cols, JFD);
-    }
-    const double t1 = omp_get_wtime();
-#pragma omp master
-    {
-      relax_wall += t1 - t0;
-      relax_calls += 1;
     }
   }
 }

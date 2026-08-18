@@ -95,7 +95,7 @@ if(AMSS_ENABLE_GPU)
   set_source_files_properties(${ABEGPU_CUDA_SOURCES} PROPERTIES LANGUAGE CUDA)
   set_target_properties(ABEGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
   target_compile_options(ABEGPU PRIVATE
-    "$<$<COMPILE_LANGUAGE:CUDA>:-rdc=true;-lineinfo>")
+    "$<$<COMPILE_LANGUAGE:CUDA>:-rdc=true;-lineinfo;--extra-device-vectorization>")
   target_compile_definitions(ABEGPU PRIVATE USE_GPU fortran3 newc MPI_CUDA_AWARE=${AMSS_MPI_CUDA_AWARE})
   target_include_directories(ABEGPU PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(ABEGPU PRIVATE CUDA::cudart MPI::MPI_CXX)

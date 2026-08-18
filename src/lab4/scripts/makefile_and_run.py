@@ -76,6 +76,9 @@ def run_ABE():
             + ["env"] + _env_tokens()
             + [exe])
     cmd = shlex.join(argv) + " < /dev/null"
+    prefix = os.environ.get("AMSS_ABE_COMMAND_PREFIX", "").strip()
+    if prefix:
+        cmd = prefix + " " + cmd
 
     _run_and_tee(cmd, log)
 

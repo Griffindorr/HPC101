@@ -42,6 +42,11 @@ REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 def _resolve_under_root(value, default):
     """Resolve a path under the lab root. Absolute values are kept; relative
     values are joined to REPO_ROOT. Empty/unset values fall back to default."""
+    # The lab4g10/lab4g5 node images preset AMSS_* to /workspace/lab4/...,
+    # the container's ephemeral volume that is invisible from the shared
+    # home / the devpod.  Treat such /workspace/* presets as unset.
+    if value and value.startswith("/workspace/"):
+        value = None
     if not value:
         value = default
     if os.path.isabs(value):
@@ -141,7 +146,11 @@ print(f"==> Output   : {File_directory}")
 print(f"==> Cache    : {CACHE_ROOT}")
 
 _safe_rmtree(File_directory)
-os.mkdir(File_directory)
+if os.path.isdir(File_directory):
+    if os.listdir(File_directory):
+        sys.exit(f" Failed to clean previous output directory: {File_directory}")
+else:
+    os.mkdir(File_directory)
 shutil.copy("AMSS_NCKU_Input.py", File_directory)
 
 output_directory         = os.path.join(File_directory, "AMSS_NCKU_output")

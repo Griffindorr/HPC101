@@ -19,6 +19,10 @@ export OMPI_ALLOW_RUN_AS_ROOT="${OMPI_ALLOW_RUN_AS_ROOT:-1}"
 export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="${OMPI_ALLOW_RUN_AS_ROOT_CONFIRM:-1}"
 AMSS_MPIEXEC="${AMSS_MPIEXEC:-mpiexec --allow-run-as-root}"
 
+# TwoPunctureABE's OpenMP thread count is pinned independently of the ABE
+# evolution (which has no OpenMP regions).  See TwoPunctures.C.
+export AMSS_TWOP_OMP_THREADS="${AMSS_TWOP_OMP_THREADS:-16}"
+
 ROOT_DIR="$(pwd)"
 PYTHON="${PYTHON:-python3}"
 
@@ -28,6 +32,16 @@ resolve_under_root() {
      *) printf '%s/%s' "$ROOT_DIR" "$1" ;;
   esac
 }
+
+# The lab4g10/lab4g5 node images preset AMSS_BUILD_DIR/AMSS_OUTPUT_ROOT/
+# AMSS_CACHE_DIR to /workspace/lab4/... which is the container's ephemeral
+# volume, invisible from the shared home / the devpod.  Treat any such
+# /workspace/* preset as unset so everything lands in the shared home.
+for _v in AMSS_BUILD_DIR AMSS_OUTPUT_ROOT AMSS_CACHE_DIR; do
+  case "${!_v:-}" in
+    /workspace/*) eval "unset $_v" ;;
+  esac
+done
 
 AMSS_BUILD_DIR="$(resolve_under_root "${AMSS_BUILD_DIR:-$ROOT_DIR/build}")"
 AMSS_OUTPUT_ROOT="$(resolve_under_root "${AMSS_OUTPUT_ROOT:-$ROOT_DIR}")"

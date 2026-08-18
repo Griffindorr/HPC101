@@ -12,7 +12,14 @@ CMAKE="${CMAKE:-cmake}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 
 # Resolve build directory relative to the lab root.
+# The lab4g10/lab4g5 node images preset AMSS_BUILD_DIR=/workspace/lab4/build,
+# which points into the container's ephemeral volume that is NOT visible
+# from the shared home / the devpod.  Treat any /workspace/* preset as if it
+# were unset so the build lands in the shared home's <lab4>/build instead.
 BUILD_DIR="${AMSS_BUILD_DIR:-$ROOT_DIR/build}"
+case "$BUILD_DIR" in
+  /workspace/*) BUILD_DIR="$ROOT_DIR/build" ;;
+esac
 case "$BUILD_DIR" in
   /*) : ;;
    *) BUILD_DIR="$ROOT_DIR/$BUILD_DIR" ;;
