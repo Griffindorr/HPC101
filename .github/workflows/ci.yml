@@ -1,0 +1,39 @@
+name: ci
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
+    workflow_dispatch:
+
+permissions:
+    contents: write
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+            - uses: astral-sh/setup-uv@v6
+            - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
+            - uses: actions/cache@v4
+              with:
+                  key: zensical-${{ env.cache_id }}
+                  path: .cache
+                  restore-keys: |
+                      zensical-
+            - run: uv sync
+            - run: uv run zensical build -f zensical.toml
+              env:
+                  PYTHONPATH: .
+                  MKDOCS_GIT_COMMITTERS_APIKEY: ${{ secrets.GITHUB_TOKEN }}
+            - name: Deploy
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'ZJUSCT/HPC101'
+              uses: peaceiris/actions-gh-pages@v4
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: ./site
+                  force_orphan: true

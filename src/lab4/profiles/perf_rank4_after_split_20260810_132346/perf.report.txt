@@ -1,0 +1,644 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 151
+#
+# Samples: 11K of event 'cycles:u'
+# Event count (approx.): 579148062082
+#
+# Overhead  Command  Shared Object                                       Symbol                                                                                                      IPC   [IPC Coverage]
+# ........  .......  ..................................................  ..........................................................................................................  ....................
+#
+    34.79%  ABE      ABE                                                 [.] compute_rhs_bssn_                                                                                       -      -            
+            |
+            ---compute_rhs_bssn_
+               |          
+               |--32.71%--bssn_class::Step(int, int)
+               |          |          
+               |          |--31.94%--bssn_class::RecursiveStep(int)
+               |          |          |          
+               |          |          |--30.50%--bssn_class::RecursiveStep(int)
+               |          |          |          |          
+               |          |          |          |--27.21%--bssn_class::RecursiveStep(int)
+               |          |          |          |          |          
+               |          |          |          |          |--19.11%--bssn_class::RecursiveStep(int)
+               |          |          |          |          |          bssn_class::Evolve(int)
+               |          |          |          |          |          main
+               |          |          |          |          |          __libc_start_call_main
+               |          |          |          |          |          |          
+               |          |          |          |          |          |--9.65%--__libc_start_call_main
+               |          |          |          |          |          |          
+               |          |          |          |          |          |--4.82%--0x3e40000868233b
+               |          |          |          |          |          |          0x3e40000868233b
+               |          |          |          |          |          |          
+               |          |          |          |          |           --4.65%--0x940000565233b
+               |          |          |          |          |                     0x940000565233b
+               |          |          |          |          |          
+               |          |          |          |           --8.10%--bssn_class::Evolve(int)
+               |          |          |          |                     main
+               |          |          |          |                     __libc_start_call_main
+               |          |          |          |                     |          
+               |          |          |          |                     |--4.01%--__libc_start_call_main
+               |          |          |          |                     |          
+               |          |          |          |                     |--2.06%--0x3e40000868233b
+               |          |          |          |                     |          0x3e40000868233b
+               |          |          |          |                     |          
+               |          |          |          |                      --2.02%--0x940000565233b
+               |          |          |          |                                0x940000565233b
+               |          |          |          |          
+               |          |          |           --3.29%--bssn_class::Evolve(int)
+               |          |          |                     main
+               |          |          |                     __libc_start_call_main
+               |          |          |                     |          
+               |          |          |                     |--1.77%--__libc_start_call_main
+               |          |          |                     |          
+               |          |          |                     |--0.80%--0x940000565233b
+               |          |          |                     |          0x940000565233b
+               |          |          |                     |          
+               |          |          |                      --0.72%--0x3e40000868233b
+               |          |          |                                0x3e40000868233b
+               |          |          |          
+               |          |           --1.44%--bssn_class::Evolve(int)
+               |          |                     main
+               |          |                     __libc_start_call_main
+               |          |                     |          
+               |          |                      --0.73%--__libc_start_call_main
+               |          |          
+               |           --0.77%--bssn_class::Evolve(int)
+               |                     main
+               |                     __libc_start_call_main
+               |          
+               |--0.73%--bssn_class::Compute_Constraint()
+               |          bssn_class::Read_Ansorg()
+               |          main
+               |          __libc_start_call_main
+               |          
+               |--0.70%--bssn_class::Constraint_Out() [clone .part.0]
+               |          bssn_class::Evolve(int)
+               |          main
+               |          __libc_start_call_main
+               |          
+                --0.65%--bssn_class::Interp_Constraint(bool)
+                          bssn_class::Evolve(int)
+                          main
+                          __libc_start_call_main
+
+     9.39%  ABE      ABE                                                 [.] polint_                                                                                                 -      -            
+            |
+            ---polint_
+               polin3_
+               global_interp_
+               |          
+                --9.37%--Patch::Interp_Points(MyList<var>*, int, double**, double*, int)
+                          |          
+                          |--8.40%--surface_integral::surf_MassPAng(double, int, cgh*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, var*, double*, monitor*)
+                          |          bssn_class::AnalysisStuff(int, double) [clone .part.0]
+                          |          |          
+                          |           --7.07%--bssn_class::Step(int, int)
+                          |                     |          
+                          |                      --4.96%--bssn_class::Evolve(int)
+                          |                                main
+                          |                                __libc_start_call_main
+                          |                                |          
+                          |                                |--3.03%--__libc_start_call_main
+                          |                                |          
+                          |                                 --1.93%--0x940000565233b
+                          |                                           0x940000565233b
+                          |          
+                           --0.97%--surface_integral::surf_Wave(double, int, cgh*, var*, var*, int, int, int, double*, double*, monitor*)
+                                     bssn_class::AnalysisStuff(int, double) [clone .part.0]
+                                     |          
+                                      --0.83%--bssn_class::Step(int, int)
+                                                |          
+                                                 --0.57%--bssn_class::Evolve(int)
+                                                           main
+                                                           __libc_start_call_main
+
+     7.96%  ABE      ABE                                                 [.] kodis_                                                                                                  -      -            
+            |
+            ---kodis_
+               compute_rhs_bssn_
+               |          
+                --7.51%--bssn_class::Step(int, int)
+                          |          
+                           --7.31%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --7.03%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                |--6.34%--bssn_class::RecursiveStep(int)
+                                                |          |          
+                                                |          |--4.32%--bssn_class::RecursiveStep(int)
+                                                |          |          bssn_class::Evolve(int)
+                                                |          |          main
+                                                |          |          __libc_start_call_main
+                                                |          |          |          
+                                                |          |          |--2.23%--__libc_start_call_main
+                                                |          |          |          
+                                                |          |          |--1.10%--0x940000565233b
+                                                |          |          |          0x940000565233b
+                                                |          |          |          
+                                                |          |           --0.99%--0x3e40000868233b
+                                                |          |                     0x3e40000868233b
+                                                |          |          
+                                                |           --2.02%--bssn_class::Evolve(int)
+                                                |                     main
+                                                |                     __libc_start_call_main
+                                                |                     |          
+                                                |                     |--1.02%--__libc_start_call_main
+                                                |                     |          
+                                                |                     |--0.50%--0x3e40000868233b
+                                                |                     |          0x3e40000868233b
+                                                |                     |          
+                                                |                      --0.50%--0x940000565233b
+                                                |                                0x940000565233b
+                                                |          
+                                                 --0.68%--bssn_class::Evolve(int)
+                                                           main
+                                                           __libc_start_call_main
+
+     6.22%  ABE      ABE                                                 [.] fdderivs_                                                                                               -      -            
+            |
+            ---fdderivs_
+               compute_rhs_bssn_
+               |          
+                --5.81%--bssn_class::Step(int, int)
+                          |          
+                           --5.64%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --5.42%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                |--4.77%--bssn_class::RecursiveStep(int)
+                                                |          |          
+                                                |          |--3.18%--bssn_class::RecursiveStep(int)
+                                                |          |          bssn_class::Evolve(int)
+                                                |          |          main
+                                                |          |          __libc_start_call_main
+                                                |          |          |          
+                                                |          |          |--1.53%--__libc_start_call_main
+                                                |          |          |          
+                                                |          |          |--0.88%--0x3e40000868233b
+                                                |          |          |          0x3e40000868233b
+                                                |          |          |          
+                                                |          |           --0.77%--0x940000565233b
+                                                |          |                     0x940000565233b
+                                                |          |          
+                                                |           --1.59%--bssn_class::Evolve(int)
+                                                |                     main
+                                                |                     __libc_start_call_main
+                                                |                     |          
+                                                |                      --0.82%--__libc_start_call_main
+                                                |          
+                                                 --0.66%--bssn_class::Evolve(int)
+                                                           main
+                                                           __libc_start_call_main
+
+     4.48%  ABE      ABE                                                 [.] lopsided_                                                                                               -      -            
+            |
+            ---lopsided_
+               compute_rhs_bssn_
+               |          
+                --4.32%--bssn_class::Step(int, int)
+                          |          
+                           --4.18%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --3.97%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                 --3.51%--bssn_class::RecursiveStep(int)
+                                                           |          
+                                                           |--2.40%--bssn_class::RecursiveStep(int)
+                                                           |          bssn_class::Evolve(int)
+                                                           |          main
+                                                           |          __libc_start_call_main
+                                                           |          |          
+                                                           |          |--1.29%--__libc_start_call_main
+                                                           |          |          
+                                                           |          |--0.60%--0x940000565233b
+                                                           |          |          0x940000565233b
+                                                           |          |          
+                                                           |           --0.51%--0x3e40000868233b
+                                                           |                     0x3e40000868233b
+                                                           |          
+                                                            --1.11%--bssn_class::Evolve(int)
+                                                                      main
+                                                                      __libc_start_call_main
+                                                                      |          
+                                                                       --0.50%--__libc_start_call_main
+
+     4.42%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f13c4                                                                                      -      -            
+            |          
+            |--1.66%--0x40002bdd13c4
+            |          |          
+            |           --1.17%--0x2e40002bd0729f
+            |                     0x2e40002bd0729f
+            |          
+            |--1.37%--0x400008cb13c4
+            |          |          
+            |           --0.84%--0x7d400008be729f
+            |                     0x7d400008be729f
+            |          
+             --1.14%--0x400005c813c4
+                       |          
+                        --0.71%--0x3b400005bb729f
+                                  0x3b400005bb729f
+
+     3.16%  ABE      libc.so.6                                           [.] __memset_sve_zva64                                                                                      -      -            
+            |
+            ---__memset_sve_zva64
+               |          
+               |--1.52%--fdderivs_
+               |          compute_rhs_bssn_
+               |          |          
+               |           --1.43%--bssn_class::Step(int, int)
+               |                     |          
+               |                      --1.39%--bssn_class::RecursiveStep(int)
+               |                                |          
+               |                                 --1.30%--bssn_class::RecursiveStep(int)
+               |                                           |          
+               |                                            --1.19%--bssn_class::RecursiveStep(int)
+               |                                                      |          
+               |                                                       --0.83%--bssn_class::RecursiveStep(int)
+               |                                                                 bssn_class::Evolve(int)
+               |                                                                 main
+               |                                                                 __libc_start_call_main
+               |          
+                --1.17%--symmetry_bd_
+
+     2.99%  ABE      libc.so.6                                           [.] __memcpy_sve                                                                                            -      -            
+            |
+            ---__memcpy_sve
+               |          
+               |--1.33%--symmetry_bd_
+               |          
+                --1.08%--copy_
+                          |          
+                           --0.63%--Parallel::data_packer(double*, MyList<Parallel::gridseg>*, MyList<Parallel::gridseg>*, int, int, MyList<var>*, MyList<var>*, int) [clone .constprop.2] [clone .isra.0]
+                                     Parallel::transfer(MyList<Parallel::gridseg>**, MyList<Parallel::gridseg>**, MyList<var>*, MyList<var>*, int)
+                                     Parallel::Sync(Patch*, MyList<var>*, int)
+                                     Parallel::Sync(MyList<Patch>*, MyList<var>*, int)
+
+     2.96%  ABE      libc.so.6                                           [.] malloc                                                                                                  -      -            
+            |          
+            |--1.13%--tcache_get_n (inlined)
+            |          tcache_get (inlined)
+            |          tcache_try_malloc (inlined)
+            |          __GI___libc_malloc (inlined)
+            |          
+             --0.55%--tag_new_usable (inlined)
+                       __GI___libc_malloc (inlined)
+
+     2.81%  ABE      ABE                                                 [.] prolong3_                                                                                               -      -            
+            |
+            ---prolong3_
+               Parallel::data_packer(double*, MyList<Parallel::gridseg>*, MyList<Parallel::gridseg>*, int, int, MyList<var>*, MyList<var>*, int) [clone .constprop.2] [clone .isra.0]
+               Parallel::transfer(MyList<Parallel::gridseg>**, MyList<Parallel::gridseg>**, MyList<var>*, MyList<var>*, int)
+               Parallel::OutBdLow2Hi(Patch*, Patch*, MyList<var>*, MyList<var>*, int)
+               bssn_class::RestrictProlong(int, int, bool, MyList<var>*, MyList<var>*, MyList<var>*) [clone .part.0]
+               |          
+                --2.68%--bssn_class::RecursiveStep(int)
+                          |          
+                           --2.55%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --2.27%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                |--1.61%--bssn_class::RecursiveStep(int)
+                                                |          bssn_class::Evolve(int)
+                                                |          main
+                                                |          __libc_start_call_main
+                                                |          |          
+                                                |           --0.81%--__libc_start_call_main
+                                                |          
+                                                 --0.66%--bssn_class::Evolve(int)
+                                                           main
+                                                           __libc_start_call_main
+
+     2.36%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230c1c                                                                                      -      -            
+            |          
+            |--0.86%--0x40002b0e0c1c
+            |          |          
+            |           --0.59%--0x2e40002bd0729f
+            |                     0x2e40002bd0729f
+            |          
+            |--0.74%--0x400004f90c1c
+            |          |          
+            |           --0.52%--0x3b400005bb729f
+            |                     0x3b400005bb729f
+            |          
+             --0.62%--0x400007fc0c1c
+
+     2.31%  ABE      libc.so.6                                           [.] cfree@GLIBC_2.17                                                                                        -      -            
+            |          
+            |--1.29%--__GI___libc_free (inlined)
+            |          
+             --0.67%--tcache_put (inlined)
+                       tcache_free (inlined)
+                       _int_free (inlined)
+                       __GI___libc_free (inlined)
+
+     2.26%  ABE      ABE                                                 [.] fderivs_                                                                                                -      -            
+            |
+            ---fderivs_
+               compute_rhs_bssn_
+               |          
+                --2.12%--bssn_class::Step(int, int)
+                          |          
+                           --2.05%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --1.98%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                 --1.63%--bssn_class::RecursiveStep(int)
+                                                           |          
+                                                           |--1.05%--bssn_class::RecursiveStep(int)
+                                                           |          bssn_class::Evolve(int)
+                                                           |          main
+                                                           |          __libc_start_call_main
+                                                           |          
+                                                            --0.59%--bssn_class::Evolve(int)
+                                                                      main
+                                                                      __libc_start_call_main
+
+     2.23%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230f24                                                                                      -      -            
+            |          
+            |--0.80%--0x40002b0e0f24
+            |          |          
+            |           --0.55%--0x2e40002bd0729f
+            |                     0x2e40002bd0729f
+            |          
+            |--0.68%--0x400007fc0f24
+            |          
+             --0.62%--0x400004f90f24
+
+     1.07%  ABE      ABE                                                 [.] rungekutta4_rout_                                                                                       -      -            
+            |
+            ---rungekutta4_rout_
+               bssn_class::Step(int, int)
+               |          
+                --1.04%--bssn_class::RecursiveStep(int)
+                          |          
+                           --0.95%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --0.83%--bssn_class::RecursiveStep(int)
+                                                |          
+                                                 --0.53%--bssn_class::RecursiveStep(int)
+                                                           bssn_class::Evolve(int)
+                                                           main
+                                                           __libc_start_call_main
+
+     0.92%  ABE      ABE                                                 [.] enforce_ga_                                                                                             -      -            
+            |
+            ---enforce_ga_
+               bssn_class::Step(int, int)
+               |          
+                --0.90%--bssn_class::RecursiveStep(int)
+                          bssn_class::RecursiveStep(int)
+                          |          
+                           --0.81%--bssn_class::RecursiveStep(int)
+
+     0.71%  ABE      ABE                                                 [.] restrict3_                                                                                              -      -            
+            |
+            ---restrict3_
+               Parallel::data_packer(double*, MyList<Parallel::gridseg>*, MyList<Parallel::gridseg>*, int, int, MyList<var>*, MyList<var>*, int) [clone .constprop.2] [clone .isra.0]
+               Parallel::transfer(MyList<Parallel::gridseg>**, MyList<Parallel::gridseg>**, MyList<var>*, MyList<var>*, int)
+               Parallel::Restrict(MyList<Patch>*, MyList<Patch>*, MyList<var>*, MyList<var>*, int)
+               bssn_class::RestrictProlong(int, int, bool, MyList<var>*, MyList<var>*, MyList<var>*) [clone .part.0]
+               |          
+                --0.68%--bssn_class::RecursiveStep(int)
+                          |          
+                           --0.66%--bssn_class::RecursiveStep(int)
+                                     |          
+                                      --0.58%--bssn_class::RecursiveStep(int)
+
+     0.64%  ABE      libm.so.6                                           [.] pow@@GLIBC_2.29                                                                                         -      -            
+            |          
+             --0.53%--exp_inline (inlined)
+                       __pow (inlined)
+
+     0.63%  ABE      ABE                                                 [.] symmetry_bd_                                                                                            -      -            
+            |
+            ---symmetry_bd_
+
+     0.47%  ABE      ABE                                                 [.] polin3_                                                                                                 -      -            
+     0.44%  ABE      libopen-pal.so.80.0.5                               [.] opal_progress                                                                                           -      -            
+     0.40%  ABE      ABE                                                 [.] bssn_rhs_sanity_check_                                                                                  -      -            
+     0.37%  ABE      libc.so.6                                           [.] malloc_consolidate                                                                                      -      -            
+     0.33%  ABE      [unknown]                                           [k] 0xffffb2dbc8bde194                                                                                      -      -            
+     0.28%  ABE      ABE                                                 [.] Ansorg::interpolate_tri_bar(double, double, double, int, int, int, double*, double*, double*, double*)  -      -            
+     0.22%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230c28                                                                                      -      -            
+     0.22%  ABE      ABE                                                 [.] misc::fact(int)                                                                                         -      -            
+     0.22%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000608c8                                                                                      -      -            
+     0.21%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f1324                                                                                      -      -            
+     0.17%  ABE      ABE                                                 [.] decide3d_                                                                                               -      -            
+     0.17%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230f50                                                                                      -      -            
+     0.16%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f13b0                                                                                      -      -            
+     0.15%  ABE      libc.so.6                                           [.] _int_free_chunk                                                                                         -      -            
+     0.15%  ABE      ABE                                                 [.] surface_integral::surf_Wave(double, int, cgh*, var*, var*, int, int, int, double*, double*, monitor*)   -      -            
+     0.15%  ABE      ABE                                                 [.] copy_                                                                                                   -      -            
+     0.14%  python3  python3.13                                          [.] _PyEval_EvalFrameDefault                                                                                -      -            
+     0.13%  ABE      libmpi.so.40.40.7                                   [.] opal_progress@plt                                                                                       -      -            
+     0.12%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f14c8                                                                                      -      -            
+     0.11%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f1174                                                                                      -      -            
+     0.11%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f13c0                                                                                      -      -            
+     0.11%  python3  python3.13                                          [.] PyErr_Occurred                                                                                          -      -            
+     0.10%  ABE      libc.so.6                                           [.] _int_malloc                                                                                             -      -            
+     0.10%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f112c                                                                                      -      -            
+     0.10%  ABE      ABE                                                 [.] memcpy@plt                                                                                              -      -            
+     0.10%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f1308                                                                                      -      -            
+     0.10%  ABE      libopen-pal.so.80.0.5                               [.] 0x0000000000027238                                                                                      -      -            
+     0.09%  ABE      ABE                                                 [.] free@plt                                                                                                -      -            
+     0.08%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f1230                                                                                      -      -            
+     0.08%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f1330                                                                                      -      -            
+     0.08%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f124c                                                                                      -      -            
+     0.08%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230f18                                                                                      -      -            
+     0.08%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230be0                                                                                      -      -            
+     0.07%  ABE      libm.so.6                                           [.] __sincos                                                                                                -      -            
+     0.07%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000f114c                                                                                      -      -            
+     0.07%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000287ec0                                                                                      -      -            
+     0.07%  ABE      ABE                                                 [.] average2_                                                                                               -      -            
+     0.06%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230c0c                                                                                      -      -            
+     0.06%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000271f8                                                                                      -      -            
+     0.05%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230bf0                                                                                      -      -            
+     0.05%  python3  python3.13                                          [.] PyUnicode_FromFormatV                                                                                   -      -            
+     0.05%  ABE      ABE                                                 [.] memset@plt                                                                                              -      -            
+     0.04%  python3  python3.13                                          [.] PyObject_GC_Del                                                                                         -      -            
+     0.03%  python3  python3.13                                          [.] _PyObject_GenericGetAttrWithDict                                                                        -      -            
+     0.03%  ABE      ABE                                                 [.] pow@plt                                                                                                 -      -            
+     0.03%  ABE      ABE                                                 [.] bssn_class::Step(int, int)                                                                              -      -            
+     0.03%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000287ecc                                                                                      -      -            
+     0.03%  python3  [unknown]                                           [k] 0xffffb2dbc8bde984                                                                                      -      -            
+     0.03%  ABE      ABE                                                 [.] Ansorg::find_point_bisection(double, int, double*, int)                                                 -      -            
+     0.03%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230bfc                                                                                      -      -            
+     0.02%  python3  python3.13                                          [.] 0x00000000000d8df8                                                                                      -      -            
+     0.02%  python3  libc.so.6                                           [.] __memset_sve_zva64                                                                                      -      -            
+     0.02%  ABE      ABE                                                 [.] admmass_bssn_                                                                                           -      -            
+     0.02%  ABE      ABE                                                 [.] get_ansorg_nbhs_                                                                                        -      -            
+     0.02%  python3  python3.13                                          [.] PyTuple_New                                                                                             -      -            
+     0.02%  ABE      ABE                                                 [.] global_interp_                                                                                          -      -            
+     0.02%  python3  python3.13                                          [.] PyObject_Free                                                                                           -      -            
+     0.02%  python3  python3.13                                          [.] _Py_Dealloc                                                                                             -      -            
+     0.02%  ABE      ABE                                                 [.] Patch::Interp_Points(MyList<var>*, int, double**, double*, int)                                         -      -            
+     0.02%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000608cc                                                                                      -      -            
+     0.02%  ABE      ABE                                                 [.] average_                                                                                                -      -            
+     0.01%  ABE      libstdc++.so.6.0.33                                 [.] operator new(unsigned long)                                                                             -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000d74d4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000d3298                                                                                      -      -            
+     0.01%  ABE      libc.so.6                                           [.] unlink_chunk.isra.0                                                                                     -      -            
+     0.01%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000271f0                                                                                      -      -            
+     0.01%  ABE      libc.so.6                                           [.] _int_free_maybe_consolidate.part.0                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001de7f8                                                                                      -      -            
+     0.01%  ABE      ABE                                                 [.] misc::Wigner_d_function(int, int, int, double)                                                          -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000002e15d4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000010ad60                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000001228f0                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] _PyEval_FrameClearAndPop                                                                                -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000d8b20                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008d710                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000d8b34                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] PyLong_FromLong@plt                                                                                     -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x0000000000111fcc                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x000000000011a6a4                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001d9680                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001cf3c4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] PyCapsule_GetPointer                                                                                    -      -            
+     0.01%  ABE      ABE                                                 [.] malloc@plt                                                                                              -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001e5ba8                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000f053c                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000e2028                                                                                      -      -            
+     0.01%  python3  libz.so.1.3.1                                       [.] deflate                                                                                                 -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001e52d4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000a1b94                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] PyObject_IsInstance                                                                                     -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000f8f6c                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000001c1d68                                                                                      -      -            
+     0.01%  python3  libc.so.6                                           [.] __memcpy_sve                                                                                            -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x000000000014d82c                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001db578                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008f9cc                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] PyArg_ParseTuple                                                                                        -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000a1bdc                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] PyContextVar_Get                                                                                        -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008cd50                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x000000000014ffa8                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] PyObject_GetAttr                                                                                        -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001dca08                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001de4c4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x0000000000305038                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] _PyLong_New                                                                                             -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000001326cc                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000f0a14                                                                                      -      -            
+     0.01%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000271c4                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001cfd8c                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001d999c                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000000f9254                                                                                      -      -            
+     0.01%  ABE      libm.so.6                                           [.] __asinh                                                                                                 -      -            
+     0.01%  python3  libjpeg.so.62.3.0                                   [.] 0x0000000000044d0c                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008d44c                                                                                      -      -            
+     0.01%  ABE      ABE                                                 [.] l2normhelper_                                                                                           -      -            
+     0.01%  ABE      ABE                                                 [.] Ansorg::ps_u_at_xyz(double, double, double)                                                             -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x0000000000112b94                                                                                      -      -            
+     0.01%  python3  libc.so.6                                           [.] __memset_chk                                                                                            -      -            
+     0.01%  python3  python3.13                                          [.] 0x0000000000147000                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000d9608                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001da3e4                                                                                      -      -            
+     0.01%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000251cc0                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008d528                                                                                      -      -            
+     0.01%  python3  _backend_agg.cpython-313-aarch64-linux-gnu.so       [.] 0x000000000003a28c                                                                                      -      -            
+     0.01%  ABE      ABE                                                 [.] getnp4_                                                                                                 -      -            
+     0.01%  ABE      libmpi.so.40.40.7                                   [.] PMPI_Allreduce                                                                                          -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000b0ff4                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000002edf38                                                                                      -      -            
+     0.01%  python3  liblapack.so.3                                      [.] dhseqr_                                                                                                 -      -            
+     0.01%  python3  libc.so.6                                           [.] pthread_getspecific@@GLIBC_2.34                                                                         -      -            
+     0.01%  ABE      [unknown]                                           [k] 0xffffb2dbc8bab138                                                                                      -      -            
+     0.01%  ABE      libopen-pal.so.80.0.5                               [.] 0x00000000000271ec                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000b380c                                                                                      -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x0000000000090f44                                                                                      -      -            
+     0.01%  ABE      libc.so.6                                           [.] _int_free_merge_chunk                                                                                   -      -            
+     0.01%  python3  libc.so.6                                           [.] cfree@GLIBC_2.17                                                                                        -      -            
+     0.01%  ABE      ABE                                                 [.] sommerfeld_rout_                                                                                        -      -            
+     0.01%  ABE      ABE                                                 [.] MPI_Comm_rank@plt                                                                                       -      -            
+     0.01%  python3  _multiarray_umath.cpython-313-aarch64-linux-gnu.so  [.] 0x00000000001d4fdc                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000009e228                                                                                      -      -            
+     0.01%  python3  libc.so.6                                           [.] __memmove_sve                                                                                           -      -            
+     0.01%  ABE      libstdc++.so.6.0.33                                 [.] operator delete(void*)@plt                                                                              -      -            
+     0.01%  python3  python3.13                                          [.] _PyTuple_FromArraySteal                                                                                 -      -            
+     0.01%  python3  python3.13                                          [.] 0x0000000000083d40                                                                                      -      -            
+     0.01%  python3  python3.13                                          [.] 0x000000000008d530                                                                                      -      -            
+     0.01%  ABE      libm.so.6                                           [.] __asin_finite@GLIBC_2.17                                                                                -      -            
+     0.01%  ABE      libc.so.6                                           [.] __GI_____strtod_l_internal                                                                              -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000b57fc                                                                                      -      -            
+     0.01%  ABE      libc.so.6                                           [.] _IO_fgets                                                                                               -      -            
+     0.01%  python3  python3.13                                          [.] 0x00000000000dc608                                                                                      -      -            
+     0.01%  ABE      ABE                                                 [.] Ansorg::xyz_to_ABp(double, double, double, double*, double*, double*)                                   -      -            
+     0.00%  ABE      libm.so.6                                           [.] __tanh                                                                                                  -      -            
+     0.00%  python3  python3.13                                          [.] PyDict_GetItemRef                                                                                       -      -            
+     0.00%  ABE      ABE                                                 [.] surface_integral::surface_integral(int)                                                                 -      -            
+     0.00%  python3  python3.13                                          [.] 0x000000000008d3f0                                                                                      -      -            
+     0.00%  ABE      [unknown]                                           [k] 0xffffb2dbc8bde984                                                                                      -      -            
+     0.00%  python3  python3.13                                          [.] 0x000000000008d560                                                                                      -      -            
+     0.00%  python3  python3.13                                          [.] 0x00000000000de18c                                                                                      -      -            
+     0.00%  ABE      libpmix.so.2.13.7                                   [.] 0x00000000001217e8                                                                                      -      -            
+     0.00%  python3  libcrypto.so.3                                      [.] OPENSSL_sk_insert                                                                                       -      -            
+     0.00%  ABE      libc.so.6                                           [.] str_to_mpn.part.0.constprop.0                                                                           -      -            
+     0.00%  ABE      libc.so.6                                           [.] __mpn_mul                                                                                               -      -            
+     0.00%  prterun  libc.so.6                                           [.] malloc                                                                                                  -      -            
+     0.00%  prterun  libc.so.6                                           [.] realloc                                                                                                 -      -            
+     0.00%  ABE      libc.so.6                                           [.] __libc_calloc                                                                                           -      -            
+     0.00%  ABE      libc.so.6                                           [.] __mpn_construct_double                                                                                  -      -            
+     0.00%  prterun  libc.so.6                                           [.] __GI___pthread_mutex_unlock_usercnt                                                                     -      -            
+     0.00%  python3  [unknown]                                           [k] 0xffffb2dbc7dc14a8                                                                                      -      -            
+     0.00%  prterun  [unknown]                                           [k] 0xffffb2dbc8bde984                                                                                      -      -            
+     0.00%  prterun  libc.so.6                                           [.] __printf_buffer                                                                                         -      -            
+     0.00%  ABE      libc.so.6                                           [.] round_and_return                                                                                        -      -            
+     0.00%  prterun  libpmix.so.2.13.7                                   [.] pmix_mca_base_var_group_add_var                                                                         -      -            
+     0.00%  ABE      libc.so.6                                           [.] _IO_getline_info                                                                                        -      -            
+     0.00%  prterun  libxml2.so.2.9.14                                   [.] xmlBufAttrSerializeTxtContent                                                                           -      -            
+     0.00%  python3  libopenblasp-r0.3.29.so                             [.] 0x0000000000754014                                                                                      -      -            
+     0.00%  prterun  libhwloc.so.15.9.0                                  [.] hwloc_bitmap_iszero                                                                                     -      -            
+     0.00%  python3  libopenblasp-r0.3.29.so                             [.] 0x0000000000753fe4                                                                                      -      -            
+     0.00%  prterun  libc.so.6                                           [.] __GI_____strtoull_l_internal                                                                            -      -            
+     0.00%  python3  python3.13                                          [.] 0x000000000008d5e4                                                                                      -      -            
+     0.00%  python3  python3.13                                          [.] 0x000000000008ff3c                                                                                      -      -            
+     0.00%  mpiexec  libc.so.6                                           [.] __add_to_environ                                                                                        -      -            
+     0.00%  ABE      ld-linux-aarch64.so.1                               [.] do_lookup_x                                                                                             -      -            
+     0.00%  ABE      ld-linux-aarch64.so.1                               [.] strcmp                                                                                                  -      -            
+     0.00%  ABE      libpmix.so.2.13.7                                   [.] 0x000000000019960c                                                                                      -      -            
+     0.00%  python3  libopenblasp-r0.3.29.so                             [.] 0x0000000000753ff8                                                                                      -      -            
+     0.00%  prterun  ld-linux-aarch64.so.1                               [.] strcmp                                                                                                  -      -            
+     0.00%  prterun  ld-linux-aarch64.so.1                               [.] _dl_fixup                                                                                               -      -            
+     0.00%  bash     ld-linux-aarch64.so.1                               [.] __GI___tunables_init                                                                                    -      -            
+     0.00%  prterun  libpmix.so.2.13.7                                   [.] 0x0000000000044038                                                                                      -      -            
+     0.00%  ABE      libc.so.6                                           [.] tcache_init.part.0                                                                                      -      -            
+     0.00%  bash     bash                                                [.] parse_and_execute                                                                                       -      -            
+     0.00%  python3  libopenblasp-r0.3.29.so                             [.] 0x0000000000753ffc                                                                                      -      -            
+     0.00%  python3  libopenblasp-r0.3.29.so                             [.] 0x0000000000754004                                                                                      -      -            
+     0.00%  ABE      libc.so.6                                           [.] __ctype_init                                                                                            -      -            
+     0.00%  python3  libc.so.6                                           [.] __GI___clone3                                                                                           -      -            
+     0.00%  python3  libc.so.6                                           [.] start_thread                                                                                            -      -            
+     0.00%  python3  [unknown]                                           [k] 0xffffb2dbc8bde194                                                                                      -      -            
+     0.00%  bash     libc.so.6                                           [.] _Fork                                                                                                   -      -            
+     0.00%  prterun  libc.so.6                                           [.] _Fork                                                                                                   -      -            
+     0.00%  prterun  libc.so.6                                           [.] sched_setaffinity@@GLIBC_2.17                                                                           -      -            
+     0.00%  python3  libc.so.6                                           [.] __syscall_cancel_arch                                                                                   -      -            
+     0.00%  bash     [unknown]                                           [k] 0xffffb2dbc8bde6b8                                                                                      -      -            
+     0.00%  prterun  libc.so.6                                           [.] __GI___clone3                                                                                           -      -            
+     0.00%  ABE      libc.so.6                                           [.] start_thread                                                                                            -      -            
+     0.00%  ABE      [vdso]                                              [.] __kernel_gettimeofday                                                                                   -      -            
+     0.00%  prterun  libc.so.6                                           [.] __syscall_cancel_arch                                                                                   -      -            
+     0.00%  python3  libc.so.6                                           [.] __memcpy_generic                                                                                        -      -            
+     0.00%  python3  libc.so.6                                           [.] _int_malloc                                                                                             -      -            
+     0.00%  python3  libc.so.6                                           [.] thread_start                                                                                            -      -            
+     0.00%  ABE      libevent_core-2.1.so.7.0.1                          [.] 0x00000000000283f4                                                                                      -      -            
+     0.00%  bash     ld-linux-aarch64.so.1                               [.] _start                                                                                                  -      -            
+     0.00%  bash     libc.so.6                                           [.] __internal_syscall_cancel                                                                               -      -            
+     0.00%  python3  libc.so.6                                           [.] __vfork                                                                                                 -      -            
+     0.00%  python3  python3.13                                          [.] 0x0000000000153eec                                                                                      -      -            
+     0.00%  ABE      libc.so.6                                           [.] __GI___snprintf                                                                                         -      -            
+     0.00%  ABE      libc.so.6                                           [.] __aarch64_cas4_acq                                                                                      -      -            
+     0.00%  ABE      libmpi.so.40.40.7                                   [.] 0x0000000000230f20                                                                                      -      -            
+     0.00%  bash     libc.so.6                                           [.] __syscall_cancel                                                                                        -      -            
+     0.00%  python3  libc.so.6                                           [.] __internal_syscall_cancel                                                                               -      -            
+     0.00%  python3  python3.13                                          [.] 0x00000000002b58b8                                                                                      -      -            
+
+
+#
+# (Tip: To measure approximate function latency with Processor Trace use perf record -e intel_pt// ... ; perf script --call-ret-trace)
+#

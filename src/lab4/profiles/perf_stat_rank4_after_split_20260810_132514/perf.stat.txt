@@ -1,0 +1,26 @@
+# started on Mon Aug 10 13:25:14 2026
+
+
+ Performance counter stats for 'bash /home/h3240105662/hpc101/src/lab4/run.sh --twop-cache':
+
+         218957.00 msec task-clock:u                     #    3.931 CPUs utilized             
+      569343000089      cycles:u                         #    2.600 GHz                         (90.01%)
+     1276536023117      instructions:u                   #    2.24  insn per cycle              (90.01%)
+      152387781189      branches:u                       #  695.971 M/sec                       (90.01%)
+         409287325      branch-misses:u                  #    0.27% of all branches             (90.02%)
+      476703632751      cache-references:u               #    2.177 G/sec                       (90.01%)
+       12237216147      cache-misses:u                   #    2.57% of all cache refs           (90.01%)
+      476228901218      L1-dcache-loads:u                #    2.175 G/sec                       (89.95%)
+       12236911156      L1-dcache-load-misses:u          #    2.57% of all L1-dcache accesses   (89.95%)
+       15095894499      LLC-loads:u                      #   68.945 M/sec                       (90.02%)
+        5875526430      LLC-load-misses:u                #   38.92% of all LL-cache accesses    (80.03%)
+           9040731      page-faults:u                    #   41.290 K/sec                     
+                 0      context-switches:u               #    0.000 /sec                      
+                 0      cpu-migrations:u                 #    0.000 /sec                      
+
+      55.700822099 seconds time elapsed
+
+     200.016007000 seconds user
+      19.070461000 seconds sys
+
+

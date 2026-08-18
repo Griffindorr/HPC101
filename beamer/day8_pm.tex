@@ -1,0 +1,49 @@
+\documentclass{zjusct-beamer/zjusctbeamer}
+
+% Metadata
+\title{A First Look at the CPU Parallel Programming Framework}
+\subtitle{PM - C++ Concurrency in Action}
+\author[bowling233]{Baolin Zhu (@bowling233)}
+\date{\today}
+\institute[ZJUSCT]{Zhejiang University Supercomputing Team}
+\copyleftnotice{CC-BY 4.0}{}
+
+\hypersetup{
+    pdftitle={\title},
+    pdfpagemode=FullScreen,
+}
+
+\setminted{
+    fontsize=\tiny % 设置代码和行号的字体大小
+}
+
+\begin{document}
+
+% Set Mono and Emoji font
+\setmonofont{DejaVu Sans Mono}
+\setemojifont{TwemojiMozilla}
+
+\maketitle
+
+% Outline (Table of Contents)
+%\cutoc
+
+\input{day8_pm/sections/1_introduction}
+\input{day8_pm/sections/2_cpp_intro}
+\input{day8_pm/sections/3_thread}
+\input{day8_pm/sections/4_mutex}
+\input{day8_pm/sections/5_condition_variable}
+\input{day8_pm/sections/6_parallel_algorithm}
+\input{day8_pm/sections/7_summary}
+
+
+% Q&A
+\begin{frame}[standout]
+	\Huge\textsc{Thank You}
+
+	\vfill
+
+	\LARGE\textsc{Any Questions?}
+\end{frame}
+
+\end{document}

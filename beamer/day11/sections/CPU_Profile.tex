@@ -1,0 +1,64 @@
+\section{CPU Profile}
+
+\begin{frame}{Profile tools}
+    \begin{itemize}
+        \item \textbf{Perf}: Linux kernel profiling tool, can be widely used(e.g. PAC)
+        \item \textbf{Vtune}: Intel's comprehensive performance analysis tool
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Perf - Linux Performance Profiler}
+    \begin{columns}
+        \begin{column}{0.6\textwidth}
+            \textbf{Key Features:}
+            \begin{itemize}
+                \item CPU sampling and tracing
+                \item Hardware counter access
+                \item Call graph generation
+                \item Memory profiling
+                \item Low overhead
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.4\textwidth}
+            \textbf{Common Commands:}
+            \begin{itemize}
+                \item \texttt{perf top}
+                \item \texttt{perf record}
+                \item \texttt{perf report}
+                \item \texttt{perf stat}
+            \end{itemize}
+        \end{column}
+    \end{columns}
+    
+    \vspace{0.3cm}
+    \footnotesize{Reference: \url{https://jia.je/software/2024/12/10/linux-perf-pmu/}}
+\end{frame}
+
+\begin{frame}{Intel VTune Profiler}
+    \begin{columns}
+        \begin{column}{0.6\textwidth}
+            \textbf{Advantages:}
+            \begin{itemize}
+                \item Rich GUI interface
+                \item Advanced hotspot analysis
+                \item Threading analysis
+                \item Memory and cache analysis
+                \item Intel hardware optimization
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.4\textwidth}
+            \textbf{Analysis Types:}
+            \begin{itemize}
+                \item Hotspots
+                \item Threading
+                \item MPI
+                \item Memory Access
+                \item Microarchitecture
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{VTune Profiler}
+    Let's take a closer look.
+\end{frame}

@@ -1,0 +1,10 @@
+site/*
+.DS_Store
+.cache
+venv/
+.venv/
+site-slides/
+build/
+
+# python
+__pycache__/

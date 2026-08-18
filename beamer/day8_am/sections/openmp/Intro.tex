@@ -1,0 +1,172 @@
+\section{Introduction}
+
+\begin{frame}{\emoji{thinking} Parallel Programming}
+  \begin{columns}
+    \begin{column}{0.4\textwidth}
+      \begin{figure}
+        \centering
+        \includegraphics<1->[width=1\linewidth]{day8_am/img/intro1.png}
+      \end{figure}
+    \end{column}
+    \begin{column}{0.6\textwidth}
+      \begin{figure}
+        \centering
+        \includegraphics<2->[width=1\linewidth]{day8_am/img/intro2.png}
+      \end{figure}
+    \end{column}
+  \end{columns}
+  %\footnotetext{https://mpitutorial.com/tutorials/mpi-introduction/}
+
+  %\footnotetext{https://www.mpi-forum.org/docs/}
+\end{frame}
+
+\begin{frame}{Shared Memory Parallel Model}
+  \begin{columns}
+    \begin{column}{0.35\textwidth}
+      \centering \textbf{UMA}
+      \begin{figure}
+        \centering
+        \includegraphics[width=\textwidth]{day8_am/img/UMA.png}
+      \end{figure}
+      \centering \textbf{U}niform \textbf{m}emory \textbf{a}ccess
+    \end{column}
+    \begin{column}{0.35\textwidth}
+      \centering \textbf{NUMA}
+      \begin{figure}
+        \centering
+        \includegraphics[height=0.5\textheight]{day8_am/img/NUMA.png}
+      \end{figure}
+      \centering \textbf{N}on-\textbf{u}niform \textbf{m}emory \textbf{a}ccess
+    \end{column}
+    \begin{column}{0.3\textwidth}
+      \begin{figure}
+        \centering
+        \includegraphics[height=140pt]{day8_am/img/two-way.png}
+      \end{figure}
+      \centering In real world
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\section{OpenMP}
+
+\begin{frame}{OpenMP}
+  \begin{columns}
+    \begin{column}{0.6\textwidth}
+      \parindent=2em
+      \parbox[t]{\linewidth}{
+        \textbf{OpenMP} (Open Multi-Processing) is an API that supports multi-platform shared-memory multiprocessing programming in \textbf{C, C++, and Fortran}.
+
+        It provides a set of compiler directives, library routines, and environment variables that allow developers to specify parallel regions, tasks, and other parallelism constructs.
+
+        \emoji{light-bulb} \textbf{OpenMP provides us an easy way to transform serial programs into parallel.}
+      }
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      \begin{figure}
+        \centering
+        \includegraphics[width=1\linewidth]{day8_am/img/omp.png}
+      \end{figure}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Example 1: Hello OpenMP}
+  \begin{columns}[T] % align columns at top
+    \begin{column}{0.6\textwidth}
+      \vspace{-10pt} % Align minted to the top
+      \begin{minted}[fontsize=\scriptsize]{c}
+#include <stdio.h>
+#include <omp.h>
+int main() {
+  printf("Welcome to OpenMP!\n");
+  #pragma omp parallel
+  {
+    int ID = omp_get_thread_num();
+    printf("hello(%d)", ID);
+    printf("world(%d)\n", ID);
+  }
+  printf("Bye!");
+  return 0;
+}
+      \end{minted}
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      \emoji{crystal-ball} Output:
+      \vfill
+      \begin{figure}
+        \centering
+        \includegraphics[width=1\linewidth]{day8_am/img/example-1-output.png}
+      \end{figure}
+    \end{column}
+  \end{columns}
+
+  \begin{minted}[fontsize=\scriptsize,escapeinside=@@]{bash}
+       $ gcc -o hello_omp hello_omp.c @-fopenmp@ # <-- Compiler Option
+   \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Example 1: Hello OpenMP}
+  \begin{columns}[T] % align columns at top
+    \begin{column}{0.6\textwidth}
+      \vspace{-10pt} % Align minted to the top
+      \begin{minted}[fontsize=\small,highlightlines={2,5,7-9},highlightcolor=Khaki1]{c}
+#include <stdio.h>
+#include <omp.h>
+int main() {
+  printf("Welcome to OpenMP!\n");
+  #pragma omp parallel
+  {
+    int ID = omp_get_thread_num();
+    printf("hello(%d)", ID);
+    printf("world(%d)\n", ID);
+  }
+  printf("Bye!");
+  return 0;
+}
+      \end{minted}
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      \vspace{2pt}
+      \textbf{Differences:}
+      \begin{itemize}
+        \item \textbf<1>{Import OpenMP Header}
+              \vspace{2.2em}
+        \item \textbf<2>{Preprocessing directive}
+              \begin{itemize}
+                \item<2-> \textbf<2>{Will cover commonly used directives}
+              \end{itemize}
+        \item \textbf<3>{Parallel Region}
+              \begin{itemize}
+                \item<3> Relates to the \textbf<3>{fork-join} model
+              \end{itemize}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Fork-Join Model}
+  \begin{columns}[T] % align columns at top
+    \begin{column}{1\textwidth}
+      \vspace{-5pt}
+      \begin{figure}
+        \centering
+        \includegraphics[width=1\linewidth]{day8_am/img/fork-join2.png}
+      \end{figure}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Fork-Join Model}
+  \begin{columns}[T] % align columns at top
+    \begin{column}{1\textwidth}
+      Thread ID: \verb|omp_get_thread_num()|
+      \vspace{-5pt}
+      \begin{figure}
+        \centering
+        \includegraphics[width=0.7\linewidth]{day8_am/img/fork-join-mine.png}
+      \end{figure}
+    \end{column}
+  \end{columns}
+\end{frame}
+

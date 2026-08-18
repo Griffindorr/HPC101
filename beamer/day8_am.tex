@@ -1,0 +1,45 @@
+\documentclass{zjusct-beamer/zjusct}
+
+% Metadata
+\title{A First Look at the CPU Parallel Programming Framework} 
+\subtitle{OpenMP \& MPI}
+\author[YooLc]{Chenxiao Li (@YooLc)}
+\date{\today}
+\institute[ZJUSCT]{Zhejiang University Supercomputing Team}
+\copyleftnotice{CC-BY 4.0}
+
+\hypersetup{
+    pdftitle={\title},
+    pdfpagemode=FullScreen,
+}
+
+\begin{document}
+
+% Set Mono and Emoji font
+\setmonofont{DejaVu Sans Mono}
+\setemojifont{TwemojiMozilla}
+
+\maketitle
+
+% Outline (Table of Contents)
+\cutoc
+
+\input{day8_am/sections/openmp/Intro}
+\input{day8_am/sections/openmp/For}
+\input{day8_am/sections/openmp/Hazard}
+\input{day8_am/sections/openmp/advanced}
+
+\input{day8_am/sections/mpi/Intro}
+\input{day8_am/sections/mpi/P2P}
+\input{day8_am/sections/mpi/Collective}
+\input{day8_am/sections/mpi/example}
+\input{day8_am/sections/mpi/advanced}
+
+% Q&A
+\begin{frame}[standout]
+    \Huge\textsc{Thank You}
+    \vfill
+    \LARGE\textsc{Any Questions?}
+\end{frame}
+
+\end{document}

@@ -1,0 +1,276 @@
+\subsection{Point-to-Point Communication}
+
+\begin{frame}[fragile]{Blocking Send and Receive}
+\begin{columns}
+    
+\begin{column}{.42\textwidth}
+\begin{tabular}{c}
+      \begin{minted}[fontsize=\footnotesize]{c}
+int MPI_Send(
+    const void* buffer,
+    int count,
+    MPI_Datatype datatype,
+    int recipient,
+    int tag,
+    MPI_Comm communicator);    
+      \end{minted}
+\end{tabular}
+\end{column}
+
+\begin{column}{.58\textwidth}
+\textbf{\large Parameters:}
+
+\begin{itemize}
+    \item \textbf{buffer} The buffer to send.
+
+    \item \textbf{count} The number of elements to send.
+
+    \item \textbf{datatype} The type of one buffer element.
+
+    \item \textbf{recipient} The rank of the recipient MPI process.
+
+    \item \textbf{tag} The tag to assign to the message.
+
+    \item \textbf{communicator} The communicator in which the standard send takes place.
+\end{itemize}
+
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Blocking Send and Receive}
+\begin{columns}
+    
+\begin{column}{.4\textwidth}
+\begin{tabular}{c}
+    \begin{minted}[fontsize=\footnotesize]{c}
+int MPI_Recv(
+    void* buffer,
+    int count,
+    MPI_Datatype datatype,
+    int sender,
+    int tag,
+    MPI_Comm communicator,
+    MPI_Status* status);
+      \end{minted}
+\end{tabular}
+\end{column}
+
+\begin{column}{.6\textwidth}
+\textbf{\large Parameters:}
+{\footnotesize
+\begin{itemize}
+    \item \textbf{buffer} The buffer to receive.
+
+    \item \textbf{count} The number of elements to receive.
+
+    \item \textbf{datatype} The type of one buffer element.
+
+    \item \textbf{sender} The rank of the sender MPI process.
+
+    \item \textbf{tag} The tag to assign to the message.
+
+    \item \textbf{communicator} The communicator in which the standard receive takes place.
+
+    \item \textbf{status} The variable in which store the status of the receive operation. Pass MPI\_STATUS\_IGNORE if unused.
+\end{itemize}
+}
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{MPI\_Status}
+    MPI\_Status represents the status of a reception operation.
+
+    At least 3 attributes: 
+    \begin{itemize}
+        \item MPI\_SOURCE
+        \item MPI\_TAG
+        \item MPI\_ERROR
+    \end{itemize}
+
+    There may be additional attributes that are implementation-specific.
+\end{frame}
+
+\begin{frame}{Message Envelope}
+    In addition to the data part, messages carry information that can be used to distinguish messages and selectively receive them.
+    \begin{itemize}
+        \item source
+        \item destination
+        \item tag
+        \item communicator
+    \end{itemize}
+\end{frame}
+
+
+\begin{frame}{Communication Mode}
+\only<1>{
+    \begin{itemize}
+        \item \textbf{Buffer Mode}
+        
+        Can be started whether or not a matching receive was posted.
+        Completion does not depend on the occurrence of a matching receive.
+        \item \textbf{Synchronous Mode}
+
+        Can be started whether or not a matching receive was posted.
+
+        The send will be completed successfully only if a matching receive is posted.
+
+        \item \textbf{Ready Mode}
+
+        May be started only if the matching receive is already posted.
+
+        \item \textbf{Standard Mode}
+
+        Depends.
+        
+    \end{itemize}
+}
+
+\only<2>{
+\footnotesize
+
+    \begin{table}[]
+\begin{tabular}{lll}
+
+\textbf{Communication mode} & \textbf{Start time}   & \textbf{Completion time}                         \\
+\hline
+Buffer mode        & Immediately                 & Message has gone to buffer              \\
+\hline
+Synchronous mode   & Immediately                 & Matching receive has posted \\
+\hline
+Ready mode         & Matching receive has posted & When the send buffer can be reused      \\
+\hline
+Standard mode      & Depends                     & Depends  \\                  \hline      
+
+\end{tabular}
+
+
+\end{table}
+}
+\end{frame}
+
+\begin{frame}[fragile]{Communication mode: A common mistake}
+
+    \textbf{Note}: MPI\_Ssend will \textbf{always wait until the receive has been posted} on the receiving end.
+    \begin{minted}[fontsize=\footnotesize]{c}
+// n = 2
+MPI_Comm_rank(comm, &my_rank);
+MPI_Ssend(sendbuf, count, MPI_INT, my_rank ^ 1, tag, comm);
+MPI_Recv(recvbuf, count, MPI_INT, my_rank ^ 1, tag, comm, &status);
+      \end{minted}
+
+    \onslide<1->{\emoji{thinking} What will happen?}
+
+    \onslide<2>{\emoji{exploding-head} Deadlock! Any solutions?}
+\end{frame}
+
+\begin{frame}[fragile]{Communication mode: Solution}
+    \begin{tabular}{c}
+      \begin{minted}[fontsize=\footnotesize]{c}
+// n = 2
+MPI_Comm_rank(comm, &my_rank);
+if (my_rank == 0) {
+    MPI_Ssend(sendbuf, count, MPI_INT, 1, tag, comm);
+    MPI_Recv(recvbuf, count, MPI_INT, 1, tag, comm, &status);
+} else if (my_rank == 1) {
+    MPI_Recv(recvbuf, count, MPI_INT, 0, tag, comm, &status);
+    MPI_Ssend(sendbuf, count, MPI_INT, 0, tag, comm);
+}
+      \end{minted}
+    \end{tabular}
+
+    \onslide<2->{\emoji{thinking} Any other solutions?}
+\end{frame}
+
+\begin{frame}[fragile]{Blocking Send and Receive}
+\begin{columns}
+    
+\begin{column}{.5\textwidth}
+\begin{minted}[fontsize=\footnotesize]{c}
+int MPI_Sendrecv(
+    const void* buffer_send,      
+    int count_send,
+    MPI_Datatype datatype_send,
+    int recipient,
+    int tag_send,
+    void* buffer_recv,
+    int count_recv,
+    MPI_Datatype datatype_recv,
+    int sender,
+    int tag_recv,
+    MPI_Comm communicator,
+    MPI_Status* status);
+\end{minted}
+\end{column}
+
+\begin{column}{.5\textwidth}
+\begin{block}{Notice}
+    The buffers used for send and receive must be different.
+\end{block}
+
+\onslide<2->{\emoji{thinking} Any other solutions?}
+
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Non-Blocking Send and Receive}
+\begin{block}{Recall}
+    A nonblocking call initiates the operation,
+    but does not complete it.
+    
+    They will return almost immediately.
+\end{block}
+    
+\begin{minted}[fontsize=\footnotesize]{c}
+int MPI_Isend(const void* buffer,
+              int count,
+              MPI_Datatype datatype,
+              int recipient,
+              int tag,
+              MPI_Comm communicator,
+              MPI_Request* request);
+\end{minted}
+\end{frame}
+
+\begin{frame}{Synchronization}
+    \begin{columns}
+        \begin{column}{.5\textwidth}
+        
+            \begin{itemize}
+                \item \textbf{MPI\_Test}
+
+                MPI\_TEST(request, flag, status)
+                
+                \begin{itemize}
+
+                \item Checks if a non-blocking operation is complete at a given time.
+                
+                \item flag=true if completes.
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+
+        \begin{column}{.5\textwidth}
+            \begin{itemize}
+                \item \textbf{MPI\_Wait}
+
+                MPI\_WAIT(request, status)
+
+                \begin{itemize}
+                    \item Waits for a non-blocking operation to complete. 
+                    \item That is, unlike MPI\_Test, MPI\_Wait will block until the underlying non-blocking operation completes.
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Non-Blocking Send and Receive(Deadlock revisit)}
+\begin{minted}[fontsize=\footnotesize]{c}
+MPI_Request req;
+MPI_Isend(sendbuf, 0x100, MPI_INT, my_rank^1, 0, MPI_COMM_WORLD, &req);
+MPI_Recv(recvbuf, 0x100, MPI_INT, my_rank^1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+\end{minted}
+\end{frame}

@@ -1,0 +1,618 @@
+\section{<thread>}
+
+\subsection{Basic Thread Management}
+
+\begin{frame}[fragile]{Launching a Thread}
+	\textbf{C++ Thread Constructor:}
+	\begin{minted}{cpp}
+template< class F, class... Args >
+    explicit thread( F&& f, Args&&... args );
+thread( thread&& other ) noexcept; // Move constructor
+    \end{minted}
+	\begin{itemize}
+		\item \texttt{other}: another thread object to construct this thread object with
+		\item \texttt{f}: Callable object to execute in the new thread
+		\item \texttt{args}: Arguments to pass to the new function
+	\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Launching a Thread - Basic Examples}
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\textbf{Simple Function}
+			\begin{minted}{cpp}
+#include <thread>
+#include <iostream>
+
+void hello() {
+    cout << "Hello from thread!"
+              << endl;
+}
+
+int main() {
+    thread t(hello);
+    t.join();
+    return 0;
+}
+			\end{minted}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\textbf{Function with Parameters}
+			\begin{minted}{cpp}
+#include <thread>
+#include <iostream>
+
+void worker(int id, const string& name) {
+    cout << "Worker " << id
+              << " (" << name << ") running"
+              << endl;
+}
+
+int main() {
+    thread t(worker, 42, "Alice");
+    t.join();
+    return 0;
+}
+			\end{minted}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Launching a Thread - Function Objects and Lambdas}
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\textbf{Function Object}
+			\begin{minted}{cpp}
+#include <thread>
+#include <iostream>
+
+class background_task {
+public:
+    void operator()() {
+        cout << "Background task running"
+                  << endl;
+    }
+};
+
+int main() {
+    background_task task;
+    thread t(task);
+    t.join();
+    return 0;
+}
+			\end{minted}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\textbf{Lambda Expression}
+			\begin{minted}{cpp}
+#include <thread>
+#include <iostream>
+
+int main() {
+    thread t([]() {
+        cout << "Lambda task running"
+                  << endl;
+    });
+
+    t.join();
+    return 0;
+}
+			\end{minted}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{\emoji{warning} Most Vexing Parse Problem}
+	\textbf{Common Pitfall:} C++ interprets ambiguous syntax as function declarations
+
+	\begin{minted}{cpp}
+struct background_task {
+    void operator()() {
+        // do work
+    }
+};
+
+// WRONG! This declares a function, not creates a thread!
+thread my_thread(background_task());
+
+// Correct ways:
+thread t1{background_task()};    // uniform initialization
+thread t2((background_task()));  // extra parentheses
+thread t3(background_task{});    // temporary object
+	\end{minted}
+
+	\textbf{Recommended:} Use uniform initialization \texttt{\{\}} or lambdas to avoid parsing issues
+\end{frame}
+
+\begin{frame}[fragile]{Waiting for a Thread to Complete}
+	\textbf{join():} Wait for thread completion before continuing
+
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+void worker(int seconds) {
+    this_thread::sleep_for(
+        chrono::seconds(seconds));
+    cout << "Work done!" << endl;
+}
+int main() {
+    cout << "Starting thread..." << endl;
+    thread t(worker, 2);
+    cout << "Waiting for completion..."
+              << endl;
+    t.join();  // Block until thread finishes
+    cout << "Thread completed!" << endl;
+    return 0;
+}
+			\end{minted}
+			\textbf{Basic join() Example}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+void worker(int id) {
+    cout << "Worker " << id
+              << " running" << endl;
+}
+int main() {
+    vector<thread> threads;
+    for(int i = 0; i < 4; i++) {
+        threads.emplace_back(worker, i);
+    }
+    for(auto& t : threads) {
+        t.join();
+    }
+    cout << "All threads completed!"
+              << endl;
+    return 0;
+}
+			\end{minted}
+			\textbf{Multiple Threads}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Waiting in Exceptional Circumstances}
+	\textbf{Problem:} Exception-safe thread management with RAII
+
+	\begin{columns}
+		\begin{column}{0.4\textwidth}
+			\begin{minted}{cpp}
+void do_work() {
+    thread t([]() {
+        // long running task
+    });
+
+    // If exception thrown here,
+    // t.join() won't be called!
+    risky_operation();
+
+    t.join();  // May not be reached
+}
+			\end{minted}
+			\textbf{Without RAII - Dangerous!}
+		\end{column}
+		\begin{column}{0.6\textwidth}
+			\begin{minted}{cpp}
+class thread_guard {
+    thread& t;
+public:
+    explicit thread_guard(thread& t_) : t(t_) {}
+    ~thread_guard() { if(t.joinable()) { t.join(); } }
+    thread_guard(const thread_guard&) = delete;
+    thread_guard& operator=(const thread_guard&) = delete;
+};
+void do_work() {
+    thread t([]() { /* long running task */ });
+    thread_guard g(t);
+    risky_operation();  // Safe!
+    // Destructor ensures join()
+}
+			\end{minted}
+			\textbf{With RAII - Safe!}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Running Threads in the Background}
+	\textbf{detach():} Run thread independently without waiting
+
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+    thread t(background_task);
+    // Detach - thread runs independently
+    t.detach();
+
+    cout << "Main continues..." << endl;
+    // Main might end before background finishes!
+    this_thread::sleep_for(
+        chrono::seconds(3));
+			\end{minted}
+			\textbf{Detached Thread Example}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+thread t(worker);
+// Check if thread can be joined
+if (t.joinable()) {
+    cout << "Thread is joinable" << endl;
+    t.join();
+}
+// After join/detach, not joinable
+cout << t.joinable() << endl;  // false
+thread t2(worker);
+t2.detach();
+cout << t2.joinable() << endl;  // false
+			\end{minted}
+			\textbf{Checking Thread State}
+		\end{column}
+	\end{columns}
+
+	%\scriptsize
+	\textbf{Important:} Every thread must be either joined or detached before destruction!
+\end{frame}
+
+\subsection{Passing Arguments to a Thread Function}
+
+\begin{frame}[fragile]{Parameter Passing Basics}
+	\textbf{Key Principle:} Thread constructor copies arguments as rvalues
+
+	\textbf{String Conversion Issues}
+	\begin{columns}
+		\begin{column}{0.6\textwidth}
+			\begin{minted}{cpp}
+void print_string(const string& str) {
+    cout << str << endl;
+}
+
+// UNSAFE! Pointer passed, conversion happens in new thread
+thread unsafe_executor() {
+    char buffer[] = "Hello World";
+    return thread(print_string, buffer);
+}
+// SAFE! Force conversion before thread creation
+thread safe_executor() {
+    char buffer[] = "Hello World";
+    return thread(print_string, string(buffer));
+}
+			\end{minted}
+		\end{column}
+		\begin{column}{0.4\textwidth}
+			\begin{minted}{cpp}
+try {
+    thread t1 = unsafe_executor();
+    t1.join();
+} catch (const exception& e) {
+    cerr << "Error in unsafe_executor: " << e.what() << endl;
+}
+thread t2 = safe_executor();
+t2.join();
+			\end{minted}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Advanced Parameter Passing}
+
+	\textbf{Member Functions}
+	\begin{minted}{cpp}
+class X {
+public:
+    void do_work(int n) {
+        cout << "Work " << n
+                  << " done by object" << endl;
+    }
+};
+
+int main() {
+    X my_x;
+
+    // Pass member function and object
+    thread t(&X::do_work, &my_x, 42);
+
+    t.join();
+    return 0;
+}
+			\end{minted}
+\end{frame}
+
+\subsection{Transferring Ownership of a Thread}
+
+\begin{frame}[fragile]{Move Semantics with Threads}
+	\textbf{thread is move-only:} Cannot be copied, only moved
+
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+thread t1(worker);
+// Move constructor
+thread t2 = move(t1);
+// t1 is now empty
+
+// Move from function
+thread t3 = create_thread();
+
+// t1.join();  // ERROR! t1 is empty
+t2.join();
+t3.join();
+			\end{minted}
+			\textbf{Basic Move Operations}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+thread t1(task1);
+thread t2(task2);
+
+// Join first thread
+t1.join();
+
+// Move assign - t1 takes over t2
+t1 = move(t2);
+// t2 is now empty
+
+t1.join();
+			\end{minted}
+			\textbf{Move Assignment}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Transferring Ownership with Move - Advanced}
+	\textbf{Move Semantics:} Transfer unique resources to threads
+
+	\begin{minted}{cpp}
+void process_data(unique_ptr<int> ptr) {
+    if (ptr) {
+        cout << "Processing: " << *ptr << endl;
+        *ptr *= 2;
+        cout << "Result: " << *ptr << endl;
+    }
+}
+
+int main() {
+    auto ptr = make_unique<int>(42);
+
+    // Transfer ownership to thread using move
+    thread t(process_data, move(ptr));
+
+    // ptr is now nullptr, ownership transferred
+    assert(ptr == nullptr);
+
+    t.join();
+    return 0;
+}
+	\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Thread Containers and RAII}
+	\textbf{Managing Multiple Threads with Move Semantics}
+
+	\begin{columns}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+class scoped_thread {
+    thread t;
+public:
+    explicit scoped_thread(thread t_) : t(move(t_)) {
+        if (!t.joinable()) {
+            throw logic_error("No thread");
+        }
+    }
+
+    ~scoped_thread() {
+        t.join();
+    }
+
+    scoped_thread(const scoped_thread&) = delete;
+    scoped_thread& operator=(const scoped_thread&) = delete;
+};
+            \end{minted}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\begin{minted}{cpp}
+int main() {
+    vector<scoped_thread> threads;
+
+    for (int i = 0; i < 3; ++i) {
+        threads.emplace_back(thread(worker, i));
+    }
+
+    // Threads automatically joined when scoped_thread destructors run
+    return 0;
+}
+	\end{minted}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+\subsection{Choosing the Number of Threads at Runtime}
+
+\begin{frame}[fragile]{Hardware Concurrency}
+	\textbf{thread::hardware\_concurrency():} Get optimal thread count
+
+	\begin{minted}{cpp}
+unsigned int num_threads = thread::hardware_concurrency();
+
+if (num_threads == 0) {
+    num_threads = 2;  // Fallback if not available
+}
+
+cout << "Using " << num_threads << " threads" << endl;
+
+vector<thread> threads;
+for (unsigned int i = 0; i < num_threads; ++i) {
+    threads.emplace_back(worker, i);
+}
+
+for (auto& t : threads) {
+    t.join();
+}
+	\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Parallel Accumulate - Helper Function}
+	\textbf{Step 1:} Define the worker function for each thread
+
+	\begin{minted}{cpp}
+template<typename Iterator, typename T>
+void accumulate_block(Iterator first, Iterator last, T& result) {
+    result = accumulate(first, last, result);
+}
+	\end{minted}
+
+	\textbf{Function Purpose:}
+	\begin{itemize}
+		\item Each thread processes a block of data
+		\item Computes sum of elements from \texttt{first} to \texttt{last}
+		\item Stores result in reference parameter
+		\item Uses standard library \texttt{accumulate} function
+	\end{itemize}
+
+	\vspace{1em}
+	\textbf{Next:} Calculate optimal thread configuration
+\end{frame}
+
+\begin{frame}[fragile]{Parallel Accumulate - Thread Configuration}
+	\textbf{Step 2:} Calculate optimal number of threads and work distribution
+
+	\begin{minted}{cpp}
+template<typename Iterator, typename T>
+T parallel_accumulate(Iterator first, Iterator last, T init) {
+    unsigned long const length = distance(first, last);
+    if (!length) return init;
+
+    // Configuration parameters
+    unsigned long const min_per_thread = 25;
+    unsigned long const max_threads =
+        (length + min_per_thread - 1) / min_per_thread;
+
+    unsigned long const hardware_threads =
+        thread::hardware_concurrency();
+
+    unsigned long const num_threads =
+        min(hardware_threads != 0 ? hardware_threads : 2, max_threads);
+
+    unsigned long const block_size = length / num_threads;
+    // ...
+}
+	\end{minted}
+
+	\textbf{Logic:} Balance between overhead and parallelism
+\end{frame}
+
+\begin{frame}[fragile]{Parallel Accumulate - Thread Creation \& Execution}
+	\textbf{Step 3:} Create threads and distribute work
+
+	\begin{minted}{cpp}
+// Storage for results and threads
+vector<T> results(num_threads);
+vector<thread> threads(num_threads - 1);
+// Create worker threads (all but last)
+Iterator block_start = first;
+for (unsigned long i = 0; i < (num_threads - 1); ++i) {
+    Iterator block_end = block_start;
+    advance(block_end, block_size);
+    threads[i] = thread(accumulate_block<Iterator, T>,
+                        block_start, block_end, ref(results[i]));
+    block_start = block_end;
+}
+// Main thread handles the last block
+accumulate_block(block_start, last, results[num_threads - 1]);
+// Wait for all threads and combine results
+for (auto& entry : threads) entry.join();
+return accumulate(results.begin(), results.end(), init);
+	\end{minted}
+\end{frame}
+
+\subsection{Identifying Threads}
+
+\begin{frame}[fragile]{Thread IDs - Basic Usage}
+	\textbf{thread::id:} Unique identifier for each thread
+
+	\begin{minted}{cpp}
+void worker() {
+    cout << "Thread ID: " << this_thread::get_id() << endl;
+}
+cout << "Main thread ID: " << this_thread::get_id() << endl;
+thread t(worker);
+cout << "Worker thread ID: " << t.get_id() << endl;
+t.join();
+cout << "After join: " << t.get_id() << endl;  // Default ID
+	\end{minted}
+
+	\textbf{Key Functions:}
+	\begin{itemize}
+		\item \texttt{this\_thread::get\_id()}: Get current thread's ID
+		\item \texttt{thread\_obj.get\_id()}: Get thread object's ID
+		\item Default-constructed ID represents "no thread"
+	\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Thread ID Properties \& Usage}
+	\textbf{Thread ID Characteristics:}
+	\begin{itemize}
+		\item \textbf{Unique:} Each executing thread has a unique ID
+		\item \textbf{Comparable:} Can be compared for equality and ordering
+		\item \textbf{Hashable:} Can be used as keys in containers
+		\item \textbf{Default-constructible:} Default ID represents "no thread"
+	\end{itemize}
+
+	\begin{minted}{cpp}
+// Thread ID comparison
+thread::id main_id = this_thread::get_id();
+thread::id default_id;  // Default-constructed
+cout << "IDs equal: " << (main_id == default_id) << endl;  // false
+// Use as container key
+unordered_set<thread::id> thread_set;
+thread_set.insert(main_id);
+// Useful for debugging and thread identification
+map<thread::id, string> thread_names;
+thread_names[this_thread::get_id()] = "main_thread";
+	\end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{\emoji{light-bulb} Best Practices Summary}
+	\scriptsize
+	\textbf{Thread Management:}
+	\begin{itemize}
+		\item Always \texttt{join()} or \texttt{detach()} threads before destruction
+		\item Use RAII (e.g., \texttt{thread\_guard}) for exception safety
+		\item Prefer \texttt{move} semantics for thread ownership transfer
+	\end{itemize}
+
+	\textbf{Parameter Passing:}
+	\begin{itemize}
+		\item Be careful with string literals - convert to \texttt{std::string} explicitly
+		\item Use \texttt{std::ref()} for reference parameters
+		\item Move unique resources (e.g., \texttt{unique\_ptr}) when transferring ownership
+	\end{itemize}
+
+	\textbf{Performance:}
+	\begin{itemize}
+		\item Use \texttt{hardware\_concurrency()} to determine optimal thread count
+		\item Balance thread overhead vs. parallelism (minimum work per thread)
+		\item Consider thread pool patterns for repeated tasks
+	\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{\emoji{books} Key Takeaways}
+	\textbf{Core Concepts Mastered:}
+	\begin{enumerate}
+		\item \textbf{Thread Creation:} Functions, lambdas, member functions
+		\item \textbf{Synchronization:} \texttt{join()} vs \texttt{detach()} patterns
+		\item \textbf{Exception Safety:} RAII wrappers for automatic cleanup
+		\item \textbf{Move Semantics:} Efficient thread and resource transfer
+		\item \textbf{Runtime Optimization:} Hardware-aware thread configuration
+	\end{enumerate}
+
+	\vspace{1em}
+	\textbf{Next Steps:}
+	\begin{itemize}
+		\item Thread synchronization with mutexes and locks
+		\item Condition variables for thread coordination
+		\item Parallel algorithms in the standard library
+	\end{itemize}
+
+	\vspace{1em}
+	\textbf{Remember:} Modern C++ threading is about safety, efficiency, and expressiveness!
+\end{frame}
