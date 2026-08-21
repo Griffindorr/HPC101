@@ -202,12 +202,14 @@ def tilelang_gdn_fwd_kernel(Hv, Hq, qk_dtype, gate_dtype, accum_dtype):
         tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: True,
     },
 )
-def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, use_tma=True):
+def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, use_tma=True, threads=1024):
     batch_size = T.dynamic("batch_size")
     num_tokens = T.dynamic("num_tokens")
     num_chunks = T.ceildiv(num_tokens, CHUNK_SIZE)
     G = Hv // Hq
     num_v_tiles = HEAD_DIM // BV
+    grp = threads // 4  # threads per warp group
+    nreg = 65536 // threads  # per-thread reg budget for 1 block/SM
 
     qk_shape = (batch_size, num_tokens, Hq, HEAD_DIM)
     v_shape = (batch_size, num_tokens, Hv, HEAD_DIM)
@@ -228,7 +230,7 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
         output: T.Tensor(output_shape, dtype=qk_dtype),
         final_state: T.Tensor(state_shape, dtype=accum_dtype),
     ):
-        with T.Kernel(batch_size * Hv * num_v_tiles, threads=512) as (block,):
+        with T.Kernel(batch_size * Hv * num_v_tiles, threads=threads) as (block,):
             v_tile = block % num_v_tiles
             h = (block // num_v_tiles) % Hv
             b = block // (Hv * num_v_tiles)
@@ -247,7 +249,6 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
             # cross-iteration races when Consumer-S overwrites it) ---
             h_shared = T.alloc_shared((2, HEAD_DIM, BV), dtype=qk_dtype)
             w_shared = T.alloc_shared((CHUNK_SIZE, BV), dtype=qk_dtype)
-            vd_shared = T.alloc_shared((2, CHUNK_SIZE, BV), dtype=qk_dtype)
             vn_shared = T.alloc_shared((2, CHUNK_SIZE, BV), dtype=qk_dtype)
             p_shared = T.alloc_shared((CHUNK_SIZE, CHUNK_SIZE), dtype=qk_dtype)
             g_exp_shared = T.alloc_shared((CHUNK_SIZE), dtype=accum_dtype, scope="shared")
@@ -263,21 +264,24 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
             o_fragment = T.alloc_fragment((CHUNK_SIZE, BV), dtype=accum_dtype)
 
             # --- barriers ---
-            data_ready = T.alloc_barrier(arrive_count=[128, 128])
-            data_free = T.alloc_barrier(arrive_count=[384, 384])
-            producer_sync = T.alloc_barrier(arrive_count=[128, 128])
-            h_ready = T.alloc_barrier(arrive_count=[128, 128])
-            vd_ready = T.alloc_barrier(arrive_count=[128, 128])
-            vn_ready = T.alloc_barrier(arrive_count=[128, 128])
+            data_ready = T.alloc_barrier(arrive_count=[grp, grp])
+            data_free = T.alloc_barrier(arrive_count=[3 * grp, 3 * grp])
+            producer_sync = T.alloc_barrier(arrive_count=[grp, grp])
+            producer_sync2 = T.alloc_barrier(arrive_count=[grp, grp])
+            h_ready = T.alloc_barrier(arrive_count=[grp, grp])
+            vd_ready = T.alloc_barrier(arrive_count=[grp, grp])
+            vn_ready = T.alloc_barrier(arrive_count=[grp, grp])
+            h_consumed = T.alloc_barrier(arrive_count=[2 * grp, 2 * grp])
+            vn_consumed = T.alloc_barrier(arrive_count=[2 * grp, 2 * grp])
 
             T.use_swizzle(10)
             tx = T.get_thread_binding()
 
             # =====================================================================
-            # Consumer-S  (tx 0 .. 127) : manage state S in h_fragment
+            # Consumer-S  (tx 0 .. grp-1) : manage state S in h_fragment
             # =====================================================================
-            if tx < 128:
-                T.set_max_nreg(128, 1)
+            if tx < grp:
+                T.set_max_nreg(nreg, 1)
 
                 # always read initial_state (host passes zeros when None)
                 T.copy(
@@ -289,7 +293,11 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
                     T.barrier_wait(data_ready[i_s % 2], (i_s // 2) % 2)
 
                     buf = i_s % 2
+                    qk_buf = i_s % 2
                     start = i_s * CHUNK_SIZE
+
+                    # wait until V/O finished reading h_shared from 2 chunks ago
+                    T.barrier_wait(h_consumed[i_s % 2], (i_s // 2 + 1) % 2)
 
                     # publish S_i (cast fp32 -> bf16) for Consumer-V/O
                     for d, vv in T.Parallel(HEAD_DIM, BV):
@@ -311,12 +319,14 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
                     T.barrier_wait(vn_ready[i_s % 2], (i_s // 2) % 2)
                     # S += K^T @ V_new_scaled
                     T.gemm(
-                        k_shared[buf, :, :],
+                        k_shared[qk_buf, :, :],
                         vn_shared[buf, :, :],
                         h_fragment,
                         transpose_A=True,
                         clear_accum=False,
                     )
+                    # done reading vn_shared for this chunk
+                    T.barrier_arrive(vn_consumed[i_s % 2])
                     T.barrier_arrive(data_free[i_s % 2])
 
                 for d, vv in T.Parallel(HEAD_DIM, BV):
@@ -325,14 +335,15 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
             # =====================================================================
             # Consumer-V  (tx 128 .. 255) : compute V_new = A @ b @ (V - g*(K@S))
             # =====================================================================
-            elif tx < 256:
-                T.set_max_nreg(128, 1)
+            elif tx < 2 * grp:
+                T.set_max_nreg(nreg, 1)
 
                 for i_s in T.serial(num_chunks):
                     T.barrier_wait(data_ready[i_s % 2], (i_s // 2) % 2)
 
                     start = i_s * CHUNK_SIZE
                     buf = i_s % 2
+                    qk_buf = i_s % 2
 
                     # exp_g, ratio  (element-wise on g; g_last computed by Consumer-S)
                     if start + CHUNK_SIZE <= num_tokens:
@@ -351,11 +362,13 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
 
                     # U = K @ S   ->  u_fragment
                     T.gemm(
-                        k_shared[buf, :, :],
+                        k_shared[qk_buf, :, :],
                         h_shared[buf, :, :],
                         u_fragment,
                         clear_accum=True,
                     )
+                    # done reading h_shared for this chunk
+                    T.barrier_arrive(h_consumed[i_s % 2])
 
                     # W = V - exp_g * U   (reuse u_fragment)
                     for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
@@ -383,18 +396,20 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
                     for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
                         if start + j_s >= num_tokens:
                             vnew_fragment[j_s, j_v] = 0
-                    # cast V_new -> vd_shared (bf16)
-                    for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
-                        vd_shared[buf, j_s, j_v] = vnew_fragment[j_s, j_v]
-                    T.barrier_arrive(vd_ready[i_s % 2])
 
-                    # V_new_scaled = ratio * V_new  -> vn_shared (bf16)
+                    # V_new_scaled = ratio * V_new  -> vn_shared (bf16).
+                    # Consumer-O reads V_new from vn_shared with a column-wise
+                    # 1/ratio fold (Pg'[i,j]=Pg[i,j]*exp(g_i-g_last)), so no
+                    # separate unscaled V_new buffer is needed.
+                    # wait until S/O finished reading vn_shared from 2 chunks ago
+                    T.barrier_wait(vn_consumed[i_s % 2], (i_s // 2 + 1) % 2)
                     for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
                         vnew_fragment[j_s, j_v] = (
                             vnew_fragment[j_s, j_v] * ratio_shared[j_s]
                         )
                     for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
                         vn_shared[buf, j_s, j_v] = vnew_fragment[j_s, j_v]
+                    T.barrier_arrive(vd_ready[i_s % 2])
                     T.barrier_arrive(vn_ready[i_s % 2])
 
                     T.barrier_arrive(data_free[i_s % 2])
@@ -402,37 +417,45 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
             # =====================================================================
             # Consumer-O  (tx 256 .. 383) : output = scale*(g*(Q@S) + decay@V_new)
             # =====================================================================
-            elif tx < 384:
-                T.set_max_nreg(128, 1)
+            elif tx < 3 * grp:
+                T.set_max_nreg(nreg, 1)
 
                 for i_s in T.serial(num_chunks):
                     T.barrier_wait(data_ready[i_s % 2], (i_s // 2) % 2)
 
                     start = i_s * CHUNK_SIZE
                     buf = i_s % 2
+                    qk_buf = i_s % 2
 
                     # P = Q @ K^T  (independent of S / V_new)
                     T.gemm(
-                        q_shared[buf, :, :],
-                        k_shared[buf, :, :],
+                        q_shared[qk_buf, :, :],
+                        k_shared[qk_buf, :, :],
                         p_fragment,
                         transpose_B=True,
                         clear_accum=True,
                     )
 
-                    # G = lower(exp(g_i - g_j))   ; Pg = scale * G * P  -> p_shared
+                    # g_last for the Pg' column rescale (absorbs 1/ratio so we
+                    # can read V_new_scaled from vn_shared directly).
+                    if start + CHUNK_SIZE <= num_tokens:
+                        g_last_local[0] = g_shared[buf, CHUNK_SIZE - 1]
+                    else:
+                        g_last_local[0] = g_shared[buf, num_tokens - 1 - start]
+
+                    # Pg' = scale * lower(exp(g_i - g_last)) * P
                     for j_s, j_t in T.Parallel(CHUNK_SIZE, CHUNK_SIZE):
                         if j_s >= j_t:
                             p_fragment[j_s, j_t] = (
                                 INV_SQRT_HEAD_DIM
                                 * T.exp2(
-                                    (g_shared[buf, j_s] - g_shared[buf, j_t]) * LOG2E
+                                    (g_shared[buf, j_s] - g_last_local[0]) * LOG2E
                                 )
                                 * p_fragment[j_s, j_t]
                             )
                         else:
                             p_fragment[j_s, j_t] = 0
-                    # cast Pg (fp32) -> p_shared (bf16)
+                    # cast Pg' (fp32) -> p_shared (bf16)
                     for j_s, j_t in T.Parallel(CHUNK_SIZE, CHUNK_SIZE):
                         p_shared[j_s, j_t] = p_fragment[j_s, j_t]
 
@@ -441,11 +464,13 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
 
                     # QS = Q @ S
                     T.gemm(
-                        q_shared[buf, :, :],
+                        q_shared[qk_buf, :, :],
                         h_shared[buf, :, :],
                         o_fragment,
                         clear_accum=True,
                     )
+                    # done reading h_shared for this chunk
+                    T.barrier_arrive(h_consumed[i_s % 2])
 
                     # O = scale * exp_g * QS
                     for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
@@ -455,28 +480,36 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
                             * o_fragment[j_s, j_v]
                         )
 
-                    # wait for V_new (vd_shared)
+                    # wait for V_new_scaled (vn_shared via vd_ready)
                     T.barrier_wait(vd_ready[i_s % 2], (i_s // 2) % 2)
 
-                    # O += Pg @ V_new
+                    # O += Pg' @ V_new_scaled
                     T.gemm(
                         p_shared,
-                        vd_shared[buf, :, :],
+                        vn_shared[buf, :, :],
                         o_fragment,
                         clear_accum=False,
                     )
+                    # done reading vn_shared for this chunk
+                    T.barrier_arrive(vn_consumed[i_s % 2])
 
-                    # store output (boundary-aware)
-                    for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
-                        if start + j_s < num_tokens:
+                    # store output (vectorized for non-boundary chunks)
+                    if start + CHUNK_SIZE <= num_tokens:
+                        for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
                             output[
                                 b, start + j_s, h, v_start + j_v
                             ] = o_fragment[j_s, j_v]
+                    else:
+                        for j_s, j_v in T.Parallel(CHUNK_SIZE, BV):
+                            if start + j_s < num_tokens:
+                                output[
+                                    b, start + j_s, h, v_start + j_v
+                                ] = o_fragment[j_s, j_v]
 
                     T.barrier_arrive(data_free[i_s % 2])
 
             # =====================================================================
-            # Producer  (tx 384 .. 511) : TMA load next chunk inputs
+            # Producer  : load all inputs for next chunk via cp.async.
             # =====================================================================
             else:
                 T.set_max_nreg(32, 0)
@@ -490,58 +523,32 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
                     buf = i_s % 2
 
                     if start + CHUNK_SIZE <= num_tokens:
-                        # Load g/beta first (synchronous), then load Q/K/V/A.
-                        for j_s in T.Parallel(CHUNK_SIZE):
-                            g_shared[buf, j_s] = g_cumsum[b, start + j_s, h]
-                            b_shared[buf, j_s] = beta[b, start + j_s, h]
-                        if use_tma:
-                            # TMA path: fast, but has a rare race with
-                            # non-zero initial_state.  Safe for zero-state.
-                            T.tma_copy(
-                                q[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
-                                q_shared[buf, :, :],
-                                barrier=data_ready[i_s % 2],
-                            )
-                            T.tma_copy(
-                                k[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
-                                k_shared[buf, :, :],
-                                barrier=data_ready[i_s % 2],
-                            )
-                            T.tma_copy(
-                                v[b, start:start + CHUNK_SIZE, h, v_start:v_start + BV],
-                                v_shared[buf, :, :],
-                                barrier=data_ready[i_s % 2],
-                            )
-                            T.tma_copy(
-                                A[b, start:start + CHUNK_SIZE, h, 0:CHUNK_SIZE],
-                                a_shared[buf, :, :],
-                                barrier=data_ready[i_s % 2],
-                            )
-                            T.barrier_arrive(data_ready[i_s % 2])
-                        else:
-                            # async_copy path: correct for all cases.
-                            T.async_copy(
-                                q[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
-                                q_shared[buf, :, :],
-                            )
-                            T.async_copy(
-                                k[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
-                                k_shared[buf, :, :],
-                            )
-                            T.async_copy(
-                                v[b, start:start + CHUNK_SIZE, h, v_start:v_start + BV],
-                                v_shared[buf, :, :],
-                            )
-                            T.async_copy(
-                                A[b, start:start + CHUNK_SIZE, h, 0:CHUNK_SIZE],
-                                a_shared[buf, :, :],
-                            )
-                            T.ptx_wait_group(0)
-                            T.barrier_arrive(producer_sync[i_s % 2])
-                            T.barrier_wait(
-                                producer_sync[i_s % 2], (i_s // 2) % 2
-                            )
-                            T.barrier_arrive(data_ready[i_s % 2])
+                        T.async_copy(
+                            g_cumsum[b, start:start + CHUNK_SIZE, h],
+                            g_shared[buf, :],
+                        )
+                        T.async_copy(
+                            beta[b, start:start + CHUNK_SIZE, h],
+                            b_shared[buf, :],
+                        )
+                        T.async_copy(
+                            q[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
+                            q_shared[buf, :, :],
+                        )
+                        T.async_copy(
+                            k[b, start:start + CHUNK_SIZE, h_qk, 0:HEAD_DIM],
+                            k_shared[buf, :, :],
+                        )
+                        T.async_copy(
+                            v[b, start:start + CHUNK_SIZE, h, v_start:v_start + BV],
+                            v_shared[buf, :, :],
+                        )
+                        T.async_copy(
+                            A[b, start:start + CHUNK_SIZE, h, 0:CHUNK_SIZE],
+                            a_shared[buf, :, :],
+                        )
+                        T.ptx_wait_group(0)
+                        T.barrier_arrive(data_ready[i_s % 2])
                     else:
                         for j_s, j_k in T.Parallel(CHUNK_SIZE, HEAD_DIM):
                             if start + j_s < num_tokens:
@@ -587,16 +594,20 @@ def tilelang_gdn_fwd_ws_kernel(Hv, Hq, BV, qk_dtype, gate_dtype, accum_dtype, us
 # multi-head cases, keep baseline for short / few-head cases.
 # ---------------------------------------------------------------------------
 def _use_ws_kernel(num_tokens: int, num_heads_v: int, has_initial_state: bool) -> bool:
-    # TMA-based ws kernel is fast and correct for zero-state cases.
-    # For initial_state cases, the TMA barrier has a rare race; use baseline.
-    if has_initial_state:
-        return False
+    # Manual T.Parallel loads + producer_sync are race-free for all cases.
     return num_tokens >= 4096 or num_heads_v >= 16
 
 
 def _ws_bv(num_heads_v: int) -> int:
-    # BV=64 for all: BV=128 exceeds SMEM without aggressive swizzle.
+    # BV=64: BV=128 halves waves but each block is much slower (larger
+    # fragments / SMEM pressure).
     return 64
+
+
+def _ws_threads(num_heads_v: int, batch_size: int) -> int:
+    # 1024 threads (50% occupancy) helps multi-head cases.  Few-head cases
+    # (incl. batch_split which measured slower with 1024) prefer 512.
+    return 1024 if num_heads_v >= 16 else 512
 
 
 def gdn_prefill_forward(
@@ -635,13 +646,13 @@ def gdn_prefill_forward(
 
     if _use_ws_kernel(num_tokens, num_heads_v, initial_state is not None):
         BV = _ws_bv(num_heads_v)
-        # TMA path is fast but has a rare race with non-zero initial_state.
-        # Use it only for zero-state cases (which are race-free in practice).
-        use_tma = initial_state is None
+        threads = _ws_threads(num_heads_v, batch_size)
+        # async_copy path with producer_sync2 is race-free.
+        use_tma = False
         kernel = tilelang_gdn_fwd_ws_kernel(
             num_heads_v, num_heads_qk, BV,
             qk_dtype=q.dtype, gate_dtype=g_cumsum.dtype, accum_dtype="float32",
-            use_tma=use_tma,
+            use_tma=use_tma, threads=threads,
         )
     else:
         kernel = tilelang_gdn_fwd_kernel(
